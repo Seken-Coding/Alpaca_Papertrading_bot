@@ -1,0 +1,59 @@
+# Alpaca Paper Trading Bot — systemd service unit
+#
+# Installation (run as root on the VPS):
+#   cp trading-bot.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable trading-bot    # start on boot
+#   systemctl start  trading-bot    # start now
+#
+# Useful commands:
+#   systemctl status  trading-bot   # check if running
+#   systemctl stop    trading-bot   # clean shutdown (sends SIGTERM)
+#   journalctl -u trading-bot -f    # live log tail
+#   cat /opt/trading-bot/logs/heartbeat  # verify bot is alive
+
+[Unit]
+Description=Alpaca Paper Trading Bot
+# Wait for network connectivity before starting (Alpaca API requires internet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as dedicated unprivileged user — never run as root
+User=trading
+Group=trading
+WorkingDirectory=/opt/trading-bot
+
+# Load .env directly — all ALPACA_* and automation vars picked up here
+EnvironmentFile=/opt/trading-bot/.env
+
+# Use the virtualenv Python so all packages are available
+ExecStart=/opt/trading-bot/venv/bin/python main.py
+
+# ── Restart policy ──────────────────────────────────────────────────────────
+# Restart on non-zero exit (crash) but NOT on clean exit (systemctl stop).
+# SIGTERM → KeyboardInterrupt → clean exit code 0 → no restart.
+Restart=on-failure
+RestartSec=30s
+
+# Give up restarting after 5 failures within 5 minutes (broken environment).
+# Run: systemctl reset-failed trading-bot  to clear the failure counter.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+# Append stdout/stderr directly to the same log files the Python logger uses.
+# This captures any startup errors that occur before logging is initialised.
+StandardOutput=append:/opt/trading-bot/logs/app.log
+StandardError=append:/opt/trading-bot/logs/errors.log
+
+# ── Hardening (optional but recommended) ────────────────────────────────────
+# Uncomment these lines to restrict what the process can access on the server.
+# PrivateTmp=yes
+# NoNewPrivileges=yes
+# ProtectSystem=strict
+# ReadWritePaths=/opt/trading-bot/logs
+
+[Install]
+WantedBy=multi-user.target
