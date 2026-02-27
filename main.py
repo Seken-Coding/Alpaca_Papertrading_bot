@@ -7,10 +7,11 @@ Manual (AUTO_EXECUTE=false, default)
     Use this for signal review before enabling automation.
 
 Automatic (AUTO_EXECUTE=true)
-    Starts a daily scheduler loop that fires once per trading day at
-    SCAN_TIME_ET (default 15:45 ET).  On each trigger it scans for
-    signals and, if the market is open, places bracket orders through
-    the full three-stage risk pipeline.
+    Scans every SCAN_INTERVAL_MIN minutes (default 5) while the market
+    is open.  Each scan evaluates strategies and, if signals pass the
+    three-stage risk pipeline, places bracket orders.  Sleeps between
+    scans and goes idle when the market is closed (evenings, weekends,
+    holidays).
 
     Runs until interrupted with Ctrl+C or SIGTERM (e.g. systemctl stop).
 """
@@ -154,16 +155,6 @@ def _scan_and_execute(client: AlpacaClient, risk: RiskManager) -> str:
 # Scheduler loop (AUTO_EXECUTE mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _parse_scan_time(scan_time_et: str) -> tuple[int, int]:
-    """Parse 'HH:MM' string → (hour, minute) integers."""
-    try:
-        h, m = scan_time_et.strip().split(":")
-        return int(h), int(m)
-    except ValueError:
-        logger.error("Invalid SCAN_TIME_ET=%r — expected HH:MM; defaulting to 15:45", scan_time_et)
-        return 15, 45
-
-
 def _write_heartbeat(now: datetime) -> None:
     """Write the current timestamp to logs/heartbeat for external monitoring.
 
@@ -190,22 +181,24 @@ def _format_delta(td: timedelta) -> str:
 
 
 def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
-    """Block forever, firing _scan_and_execute once per trading day at SCAN_TIME_ET.
+    """Block forever, scanning every SCAN_INTERVAL_MIN minutes while the market is open.
 
-    The loop is wrapped in two try/except layers:
-      - Inner: catches any unexpected exception in a single iteration and logs it,
-               then continues running (prevents a transient error from killing the bot).
-      - Outer: catches KeyboardInterrupt (Ctrl+C or SIGTERM) for a clean exit.
+    The loop checks every 60 seconds.  When the market is open and enough
+    time has elapsed since the last scan, a new scan cycle runs.  When the
+    market is closed (evenings, weekends, holidays) the bot idles and logs
+    a status message every 10 minutes.
     """
-    scan_hour, scan_minute = _parse_scan_time(settings.scan_time_et)
+    scan_interval = timedelta(minutes=settings.scan_interval_min)
     logger.info(
-        "Scheduler started — daily scan at %02d:%02d ET (AUTO_EXECUTE=%s)",
-        scan_hour, scan_minute, settings.auto_execute,
+        "Scheduler started — scanning every %dm while market is open (AUTO_EXECUTE=%s)",
+        settings.scan_interval_min, settings.auto_execute,
     )
 
-    last_fired: date | None = None          # Ensures we fire at most once per calendar day
+    last_scan_at: datetime | None = None     # When the last scan started
     last_status_log: datetime | None = None  # Timestamp of last status message
     last_scan_result: str = ""               # One-line summary of last scan outcome
+    scans_today: int = 0                     # How many scans fired today
+    current_day: date | None = None          # Track day rollovers
 
     try:
         while True:
@@ -213,8 +206,17 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
                 now = datetime.now(_ET)
                 today = now.date()
 
-                # Write heartbeat every tick so monitoring can verify the bot is alive
+                # Reset daily counter on day change
+                if current_day != today:
+                    current_day = today
+                    scans_today = 0
+                    last_scan_result = ""
+
+                # Write heartbeat every tick
                 _write_heartbeat(now)
+
+                # ── Check market status ────────────────────────────────────
+                market_open = client.is_market_open()
 
                 # ── Periodic status log (every 10 minutes) ────────────────
                 if last_status_log is None or (now - last_status_log) >= _STATUS_INTERVAL:
@@ -223,85 +225,66 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
                     time_str = now.strftime("%H:%M")
 
                     if now.weekday() >= 5:
-                        # Weekend
                         days_to_mon = 7 - now.weekday()
                         logger.info(
                             "Status — %s ET %s — weekend, market reopens Monday (%dd)",
                             time_str, day_name, days_to_mon,
                         )
-                    elif last_fired == today:
-                        # Already scanned today
-                        detail = last_scan_result or "completed"
+                    elif not market_open:
                         logger.info(
-                            "Status — %s ET %s — scan fired today: %s",
-                            time_str, day_name, detail,
+                            "Status — %s ET %s — market closed, scans today: %d | last: %s",
+                            time_str, day_name, scans_today,
+                            last_scan_result or "none yet",
                         )
                     else:
-                        # Weekday, waiting for scan time
-                        scan_target = now.replace(
-                            hour=scan_hour, minute=scan_minute, second=0, microsecond=0,
+                        # Market is open
+                        if last_scan_at is not None:
+                            since = now - last_scan_at
+                            next_in = scan_interval - since
+                            next_str = (
+                                f"next scan in {_format_delta(next_in)}"
+                                if next_in.total_seconds() > 0
+                                else "next scan imminent"
+                            )
+                        else:
+                            next_str = "first scan imminent"
+                        logger.info(
+                            "Status — %s ET %s — market open, %s | scans today: %d | last: %s",
+                            time_str, day_name, next_str, scans_today,
+                            last_scan_result or "none yet",
                         )
-                        remaining = scan_target - now
-                        if remaining.total_seconds() > 0:
-                            logger.info(
-                                "Status — %s ET %s — waiting for scan at %02d:%02d ET (%s to scan)",
-                                time_str, day_name, scan_hour, scan_minute,
-                                _format_delta(remaining),
-                            )
-                        else:
-                            # Past scan time but hasn't fired yet (first tick after startup?)
-                            logger.info(
-                                "Status — %s ET %s — scan time reached, trigger imminent",
-                                time_str, day_name,
-                            )
 
-                # ── Skip weekends (just sleep — heartbeat is already written)
-                if now.weekday() < 5:   # 0=Mon … 4=Fri
-                    # Fire once when we reach or pass scan time on a new day.
-                    # Using >= instead of == prevents missing the window if
-                    # time.sleep(60) overshoots the exact minute.
-                    at_scan_time = (
-                        now.hour > scan_hour
-                        or (now.hour == scan_hour and now.minute >= scan_minute)
+                # ── Scan trigger ───────────────────────────────────────────
+                if market_open:
+                    time_to_scan = (
+                        last_scan_at is None
+                        or (now - last_scan_at) >= scan_interval
                     )
-                    if at_scan_time and last_fired != today:
-                        last_fired = today  # Mark fired now — prevents double-trigger
-                        # NYSE holiday / early-close guard — Alpaca clock is ground truth.
-                        if not client.is_market_open():
-                            last_scan_result = "market closed (holiday or early close)"
-                            logger.info(
-                                "Scheduler: market closed at %s ET — skipping scan "
-                                "(holiday or early close)",
-                                now.strftime("%H:%M"),
+                    if time_to_scan:
+                        last_scan_at = now
+                        scans_today += 1
+                        logger.info(
+                            "Scan #%d — running scan cycle (%s ET)",
+                            scans_today, now.strftime("%H:%M"),
+                        )
+                        try:
+                            result = _scan_and_execute(client, risk)
+                            last_scan_result = result or "no actionable recommendations"
+                        except Exception as exc:
+                            last_scan_result = f"error: {exc}"
+                            logger.error(
+                                "Scan cycle error: %s", exc, exc_info=True,
                             )
-                            risk_logger.info(
-                                "Scan skipped: market closed at scan time (%s)", today
-                            )
-                        else:
-                            logger.info(
-                                "Scheduler trigger — running scan cycle (%s ET)",
-                                now.strftime("%H:%M"),
-                            )
-                            try:
-                                summary = _scan_and_execute(client, risk)
-                                last_scan_result = summary or "no actionable recommendations"
-                            except Exception as exc:
-                                last_scan_result = f"error: {exc}"
-                                logger.error(
-                                    "Scan cycle error: %s", exc, exc_info=True
-                                )
 
             except KeyboardInterrupt:
-                raise   # Let the outer handler catch it cleanly
+                raise
 
             except Exception as exc:
-                # Unexpected crash inside one scheduler tick.  Log it and keep running —
-                # the bot will retry on the next minute tick.
                 logger.error(
-                    "Scheduler loop error (will retry in 60s): %s", exc, exc_info=True
+                    "Scheduler loop error (will retry in 60s): %s", exc, exc_info=True,
                 )
 
-            time.sleep(60)   # Check once per minute
+            time.sleep(60)
 
     except KeyboardInterrupt:
         logger.info("Scheduler stopped — exiting cleanly")
