@@ -19,7 +19,7 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -85,44 +85,45 @@ def _connect() -> tuple[AlpacaClient, RiskManager]:
     return client, risk
 
 
-def _scan_and_execute(client: AlpacaClient, risk: RiskManager) -> None:
-    """Run one full scan cycle and (if AUTO_EXECUTE) place orders."""
-    # Portfolio gate
+def _scan_and_execute(client: AlpacaClient, risk: RiskManager) -> str:
+    """Run one full scan cycle and (if AUTO_EXECUTE) place orders.
+
+    Returns a short summary string for the scheduler to report in status logs.
+    """
+    scan_start = time.monotonic()
+
+    # Refresh account state for risk tracking
     try:
         account = client.get_account()
-        positions = client.get_positions()
         equity = float(account.equity)
         buying_power = float(account.buying_power)
         risk.update_equity(equity)
+        logger.info(
+            "Account state — equity: $%.2f | buying power: $%.2f",
+            equity, buying_power,
+        )
     except Exception as exc:
         logger.error("Account fetch failed: %s", exc)
-        return
+        return f"account fetch failed: {exc}"
 
-    gate = risk.check_portfolio_limits(
-        position_count=len(positions),
-        equity=equity,
-        buying_power=buying_power,
-    )
-    if not gate.allowed:
-        risk_logger.warning("Portfolio gate BLOCKED scan: %s", gate.reason)
-        logger.warning("Trading halted by risk manager: %s", gate.reason)
-        return
-
-    risk_logger.info("Portfolio gate PASSED")
-
-    # Scan
+    # Scan (portfolio gate is checked inside ExecutionEngine.execute)
+    logger.info("Starting strategy scan ...")
     scanner = StrategyScanner(
         client=client,
         strategies=[MomentumStrategy(), MeanReversionStrategy()],
     )
     recommendations = scanner.scan()
 
+    scan_elapsed = time.monotonic() - scan_start
     if not recommendations:
-        logger.info("No actionable recommendations this cycle.")
-        return
+        logger.info(
+            "No actionable recommendations this cycle (scan took %.1fs).",
+            scan_elapsed,
+        )
+        return "no actionable recommendations"
 
     logger.info("=" * 72)
-    logger.info("RECOMMENDATIONS (%d)", len(recommendations))
+    logger.info("RECOMMENDATIONS (%d) — scan took %.1fs", len(recommendations), scan_elapsed)
     for rec in recommendations:
         logger.info(str(rec))
         trades_logger.info("RECOMMENDATION | %s", str(rec))
@@ -138,9 +139,15 @@ def _scan_and_execute(client: AlpacaClient, risk: RiskManager) -> None:
             require_market_open=True,
         )
         summary = engine.execute(recommendations)
-        logger.info("Execution complete: %s", summary)
+        total_elapsed = time.monotonic() - scan_start
+        logger.info("Execution complete (%.1fs total): %s", total_elapsed, summary)
+        return (
+            f"placed {len(summary.placed)}, blocked {len(summary.blocked)}, "
+            f"skipped {len(summary.skipped)}, errors {len(summary.errors)}"
+        )
     else:
         logger.info("AUTO_EXECUTE=false — recommendations logged only, no orders placed.")
+        return f"{len(recommendations)} recommendations (auto-execute off)"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -169,6 +176,19 @@ def _write_heartbeat(now: datetime) -> None:
         pass
 
 
+_STATUS_INTERVAL = timedelta(minutes=10)
+_DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _format_delta(td: timedelta) -> str:
+    """Format a timedelta as 'Xh Ym'."""
+    total_min = int(td.total_seconds()) // 60
+    h, m = divmod(total_min, 60)
+    if h > 0:
+        return f"{h}h {m}m"
+    return f"{m}m"
+
+
 def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
     """Block forever, firing _scan_and_execute once per trading day at SCAN_TIME_ET.
 
@@ -183,7 +203,9 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
         scan_hour, scan_minute, settings.auto_execute,
     )
 
-    last_fired: date | None = None   # Ensures we fire at most once per calendar day
+    last_fired: date | None = None          # Ensures we fire at most once per calendar day
+    last_status_log: datetime | None = None  # Timestamp of last status message
+    last_scan_result: str = ""               # One-line summary of last scan outcome
 
     try:
         while True:
@@ -194,14 +216,59 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
                 # Write heartbeat every tick so monitoring can verify the bot is alive
                 _write_heartbeat(now)
 
-                # Skip weekends (just sleep — heartbeat is already written)
+                # ── Periodic status log (every 10 minutes) ────────────────
+                if last_status_log is None or (now - last_status_log) >= _STATUS_INTERVAL:
+                    last_status_log = now
+                    day_name = _DAY_NAMES[now.weekday()]
+                    time_str = now.strftime("%H:%M")
+
+                    if now.weekday() >= 5:
+                        # Weekend
+                        days_to_mon = 7 - now.weekday()
+                        logger.info(
+                            "Status — %s ET %s — weekend, market reopens Monday (%dd)",
+                            time_str, day_name, days_to_mon,
+                        )
+                    elif last_fired == today:
+                        # Already scanned today
+                        detail = last_scan_result or "completed"
+                        logger.info(
+                            "Status — %s ET %s — scan fired today: %s",
+                            time_str, day_name, detail,
+                        )
+                    else:
+                        # Weekday, waiting for scan time
+                        scan_target = now.replace(
+                            hour=scan_hour, minute=scan_minute, second=0, microsecond=0,
+                        )
+                        remaining = scan_target - now
+                        if remaining.total_seconds() > 0:
+                            logger.info(
+                                "Status — %s ET %s — waiting for scan at %02d:%02d ET (%s to scan)",
+                                time_str, day_name, scan_hour, scan_minute,
+                                _format_delta(remaining),
+                            )
+                        else:
+                            # Past scan time but hasn't fired yet (first tick after startup?)
+                            logger.info(
+                                "Status — %s ET %s — scan time reached, trigger imminent",
+                                time_str, day_name,
+                            )
+
+                # ── Skip weekends (just sleep — heartbeat is already written)
                 if now.weekday() < 5:   # 0=Mon … 4=Fri
-                    # Fire once when we reach scan time on a new day
-                    at_scan_time = (now.hour == scan_hour and now.minute == scan_minute)
+                    # Fire once when we reach or pass scan time on a new day.
+                    # Using >= instead of == prevents missing the window if
+                    # time.sleep(60) overshoots the exact minute.
+                    at_scan_time = (
+                        now.hour > scan_hour
+                        or (now.hour == scan_hour and now.minute >= scan_minute)
+                    )
                     if at_scan_time and last_fired != today:
                         last_fired = today  # Mark fired now — prevents double-trigger
                         # NYSE holiday / early-close guard — Alpaca clock is ground truth.
                         if not client.is_market_open():
+                            last_scan_result = "market closed (holiday or early close)"
                             logger.info(
                                 "Scheduler: market closed at %s ET — skipping scan "
                                 "(holiday or early close)",
@@ -216,8 +283,10 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
                                 now.strftime("%H:%M"),
                             )
                             try:
-                                _scan_and_execute(client, risk)
+                                summary = _scan_and_execute(client, risk)
+                                last_scan_result = summary or "no actionable recommendations"
                             except Exception as exc:
+                                last_scan_result = f"error: {exc}"
                                 logger.error(
                                     "Scan cycle error: %s", exc, exc_info=True
                                 )

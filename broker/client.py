@@ -38,17 +38,16 @@ _RETRYABLE = (ConnectionError, TimeoutError, OSError)
 def _retry_api(fn, max_attempts: int = 3, backoff: float = 1.5):
     """Call *fn()* with exponential backoff on transient failures.
 
-    Retries up to *max_attempts* times.  Non-transient exceptions (e.g. Alpaca
-    API errors for bad data) are re-raised immediately on the first attempt so
-    the caller can handle them.  This function is intentionally simple — only
-    wrap read-only API calls (get_account, get_positions, get_bars) here; do NOT
-    wrap order submission, which is not idempotent.
+    Retries up to *max_attempts* times for transient errors (network blips,
+    timeouts).  Non-transient exceptions (e.g. Alpaca API errors for bad
+    credentials or invalid data) are re-raised immediately so the caller can
+    handle them.
     """
     last_exc: Exception | None = None
     for attempt in range(max_attempts):
         try:
             return fn()
-        except Exception as exc:
+        except _RETRYABLE as exc:
             last_exc = exc
             if attempt == max_attempts - 1:
                 raise
@@ -58,6 +57,8 @@ def _retry_api(fn, max_attempts: int = 3, backoff: float = 1.5):
                 attempt + 1, max_attempts, exc, wait,
             )
             _time.sleep(wait)
+        except Exception:
+            raise  # Non-transient error — fail immediately
     raise last_exc  # unreachable, but satisfies type checkers
 
 
@@ -222,12 +223,13 @@ class AlpacaClient:
         take_profit_price: float,
         stop_loss_price: float,
         stop_loss_limit_price: Optional[float] = None,
-        time_in_force: TimeInForce = TimeInForce.DAY,
+        time_in_force: TimeInForce = TimeInForce.GTC,
     ):
         """Submit a bracket (OTO/OCO) order.
 
         A bracket order consists of an entry market order with a
-        take-profit limit and stop-loss attached.
+        take-profit limit and stop-loss attached.  Uses GTC so the
+        TP/SL legs persist across trading sessions until triggered.
         """
         stop_loss_params = {"stop_price": stop_loss_price}
         if stop_loss_limit_price is not None:
@@ -332,10 +334,20 @@ class AlpacaClient:
         return _retry_api(self._trading.get_clock)
 
     def is_market_open(self) -> bool:
-        """Return True if the US equity market is currently open."""
+        """Return True if the US equity market is currently open.
+
+        Uses retry logic for transient errors.  Only returns False after
+        retries are exhausted, and logs the failure so it's visible in logs.
+        """
         try:
-            return bool(self._trading.get_clock().is_open)
-        except Exception:
+            clock = _retry_api(self._trading.get_clock)
+            return bool(clock.is_open)
+        except Exception as exc:
+            logger.error(
+                "Failed to check market status after retries: %s — "
+                "assuming market closed",
+                exc,
+            )
             return False
 
     def wait_for_bracket_attachment(
