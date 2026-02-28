@@ -1,7 +1,7 @@
 """Fetch market data from Alpaca and normalise into pandas DataFrames."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -97,6 +97,15 @@ def load_bars(
     dict[str, DataFrame]
         OHLCV DataFrames keyed by symbol.
     """
+    # Auto-compute a start date when none is provided.
+    # Without an explicit start the Alpaca API returns only the most recent
+    # bar, regardless of the limit parameter.  We estimate the calendar days
+    # needed to cover `limit` trading days (~1.5 cal days per trading day
+    # plus a buffer for holidays).
+    if start is None and limit is not None:
+        lookback_days = int(limit * 1.5) + 10
+        start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+
     logger.info(
         "Loading bars for %s | timeframe=%s | start=%s | end=%s | limit=%s",
         symbols, timeframe, start, end, limit,
