@@ -11,11 +11,15 @@ BUY when:
 SELL when the opposite conditions hold.
 """
 
+import logging
+
 import pandas as pd
 
 from analysis import indicators as ind
 from analysis.signals import Signal, TradeSignal, crossover, crossunder
 from strategies.base import Strategy
+
+logger = logging.getLogger(__name__)
 
 
 class MomentumStrategy(Strategy):
@@ -101,6 +105,11 @@ class MomentumStrategy(Strategy):
         bull = len(bullish)
         bear = len(bearish)
         total = bull + bear or 1
+
+        logger.info(
+            "%s Momentum: bull=%d bear=%d | ADX=%.0f RVOL=%.1fx RSI=%.1f MACD_hist=%.3f",
+            symbol, bull, bear, adx_val, rvol_val, rsi_val, hist,
+        )
 
         if bull > bear:
             return TradeSignal(

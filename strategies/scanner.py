@@ -55,7 +55,7 @@ class StrategyScanner:
         strategies: List[Strategy],
         screener_config: Optional[ScreenerConfig] = None,
         universe: Optional[List[str]] = None,
-        lookback_bars: int = 200,
+        lookback_bars: int = 500,
     ):
         self.client = client
         self.strategies = strategies
@@ -98,11 +98,22 @@ class StrategyScanner:
                 logger.exception("Indicator computation failed for %s — skipping", symbol)
                 continue
 
-            # Capture ATR once for this symbol (shared by all strategies below)
+            # Capture key indicator values for logging
+            latest = enriched.iloc[-1]
             atr_val = 0.0
             if "atr" in enriched.columns:
-                raw = enriched["atr"].iloc[-1]
+                raw = latest["atr"]
                 atr_val = float(raw) if raw == raw else 0.0  # NaN guard
+
+            def _safe(col: str) -> float:
+                v = latest.get(col, float("nan"))
+                return float(v) if v == v else 0.0
+
+            logger.info(
+                "  %s indicators: RSI=%.1f ADX=%.1f RVOL=%.1fx ATR=$%.2f MACD_hist=%.3f close=$%.2f",
+                symbol, _safe("rsi"), _safe("adx"), _safe("rvol"),
+                atr_val, _safe("macd_hist"), _safe("close"),
+            )
 
             for strategy in self.strategies:
                 try:
@@ -112,7 +123,16 @@ class StrategyScanner:
                     continue
 
                 if signal.signal == Signal.HOLD:
+                    logger.info(
+                        "  %s [%s]: HOLD — %s", symbol, strategy.name, signal.reason
+                    )
                     continue
+
+                logger.info(
+                    "  %s [%s]: %s strength=%.0f%% — %s",
+                    symbol, strategy.name, signal.signal.value,
+                    signal.strength * 100, signal.reason,
+                )
 
                 recommendations.append(Recommendation(
                     symbol=signal.symbol,

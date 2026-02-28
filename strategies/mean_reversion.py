@@ -14,11 +14,15 @@ SELL when:
   - MACD histogram is turning downward
 """
 
+import logging
+
 import pandas as pd
 
 from analysis import indicators as ind
 from analysis.signals import Signal, TradeSignal, crossover, crossunder
 from strategies.base import Strategy
+
+logger = logging.getLogger(__name__)
 
 
 class MeanReversionStrategy(Strategy):
@@ -48,6 +52,10 @@ class MeanReversionStrategy(Strategy):
         # a falling knife or shorting a breakout.  Skip entirely if trending.
         adx_val = float(latest.get("adx", 0))
         if adx_val > 25:
+            logger.info(
+                "%s MeanReversion: ADX=%.0f > 25 — trending, skipped",
+                symbol, adx_val,
+            )
             return TradeSignal(
                 Signal.HOLD, symbol, price,
                 f"Trending market (ADX={adx_val:.0f} > 25) — mean reversion skipped",
@@ -98,6 +106,13 @@ class MeanReversionStrategy(Strategy):
         bull = len(bullish)
         bear = len(bearish)
         total = bull + bear or 1
+
+        logger.info(
+            "%s MeanReversion: bull=%d bear=%d | ADX=%.0f RSI=%.1f BB_pos=%.2f MACD_hist=%.3f",
+            symbol, bull, bear, adx_val, rsi_val,
+            (price - bb_middle) / (bb_upper - bb_lower) if bb_upper != bb_lower else 0,
+            macd_hist,
+        )
 
         if bull > bear:
             return TradeSignal(

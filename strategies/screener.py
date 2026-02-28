@@ -23,7 +23,7 @@ class ScreenerConfig:
     min_price: float = 5.0
     max_price: float = 1_000.0
     min_avg_volume: float = 500_000.0   # average daily volume
-    lookback_bars: int = 20             # days of history for volume check
+    lookback_bars: int = 50             # days of history for volume check
     max_candidates: int = 50            # cap the watchlist size
 
 
@@ -81,18 +81,35 @@ class StockScreener:
         )
 
         candidates: List[dict] = []
+        min_bars = self.config.lookback_bars // 2
         for symbol, df in frames.items():
-            if df.empty or len(df) < self.config.lookback_bars // 2:
+            if df.empty or len(df) < min_bars:
+                logger.info(
+                    "  %s: only %d bars (need %d) — skipped",
+                    symbol, len(df), min_bars,
+                )
                 continue
 
             last_close = float(df["close"].iloc[-1])
             avg_vol = float(df["volume"].mean())
 
             if not (self.config.min_price <= last_close <= self.config.max_price):
+                logger.info(
+                    "  %s: price $%.2f outside range $%.0f–$%.0f — skipped",
+                    symbol, last_close, self.config.min_price, self.config.max_price,
+                )
                 continue
             if avg_vol < self.config.min_avg_volume:
+                logger.info(
+                    "  %s: avg vol %.0fk < %.0fk min — skipped",
+                    symbol, avg_vol / 1000, self.config.min_avg_volume / 1000,
+                )
                 continue
 
+            logger.info(
+                "  %s: PASSED (close=$%.2f, avg_vol=%.1fM)",
+                symbol, last_close, avg_vol / 1_000_000,
+            )
             candidates.append({
                 "symbol": symbol,
                 "last_close": last_close,
