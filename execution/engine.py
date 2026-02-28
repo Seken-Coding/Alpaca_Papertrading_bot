@@ -27,6 +27,8 @@ from broker.client import AlpacaClient
 from risk.manager import RiskManager
 from strategies.scanner import Recommendation
 from analysis.signals import Signal
+from execution.position_store import PositionStore
+from execution.trade_journal import TradeJournal
 
 logger = logging.getLogger(__name__)
 trades_logger = logging.getLogger("trades")
@@ -84,11 +86,15 @@ class ExecutionEngine:
         risk_manager: RiskManager,
         max_orders: int = 3,
         require_market_open: bool = True,
+        position_store: Optional[PositionStore] = None,
+        trade_journal: Optional[TradeJournal] = None,
     ):
         self.client = client
         self.risk = risk_manager
         self.max_orders = max_orders
         self.require_market_open = require_market_open
+        self._store = position_store
+        self._journal = trade_journal
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -209,6 +215,42 @@ class ExecutionEngine:
 
                 placed_count += 1
                 open_symbols.add(rec.symbol)   # Prevent duplicate in same run
+
+                # ── Record in position store ──────────────────────────
+                if self._store is not None:
+                    try:
+                        self._store.record_entry(
+                            symbol=rec.symbol,
+                            entry_price=rec.price,
+                            entry_atr=rec.atr,
+                            strategy=rec.strategy,
+                            order_id=str(order.id),
+                            shares=sizing.shares,
+                            stop_loss_price=sizing.stop_loss_price,
+                            take_profit_price=sizing.take_profit_price,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "PositionStore write failed for %s: %s",
+                            rec.symbol, exc,
+                        )
+
+                # ── Record in trade journal ───────────────────────────
+                if self._journal is not None:
+                    try:
+                        self._journal.record_entry(
+                            symbol=rec.symbol,
+                            qty=sizing.shares,
+                            price=rec.price,
+                            strategy=rec.strategy,
+                            reason=rec.reason,
+                            entry_order_id=str(order.id),
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "TradeJournal write failed for %s: %s",
+                            rec.symbol, exc,
+                        )
 
                 trades_logger.info(
                     "EXECUTED | %s | BUY %d shares @ $%.2f | SL $%.2f | TP $%.2f | "

@@ -16,6 +16,8 @@ from analysis.data_loader import load_bars
 from alpaca.data.timeframe import TimeFrame
 from risk.manager import RiskManager, RiskConfig
 from execution.engine import ExecutionEngine
+from execution.position_store import PositionStore
+from execution.trade_journal import TradeJournal
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,8 @@ class TradingApp(tk.Tk):
         self._scores: list[StockScore] = []
         self._order_ids: dict[str, str] = {}
         self._current_equity: float = 0.0
+        self._position_store = PositionStore()
+        self._trade_journal = TradeJournal()
 
         self.title("Alpaca Paper Trading Bot")
         self.geometry("1280x820")
@@ -988,9 +992,51 @@ class TradingApp(tk.Tk):
             return
         def work():
             try:
+                # Fetch position details for P/L before closing
+                positions = self.client.get_positions()
+                pos = next((p for p in positions if p.symbol == symbol), None)
+
                 self.client.close_position(symbol)
                 trades_logger.info("CLOSE POSITION — %s", symbol)
                 logger.info("Closed position: %s", symbol)
+
+                # Journal the exit
+                if pos is not None:
+                    from datetime import datetime, timezone
+                    current_price = float(pos.current_price)
+                    qty = int(float(pos.qty))
+                    avg_entry = float(pos.avg_entry_price)
+                    pnl = (current_price - avg_entry) * qty
+
+                    meta = self._position_store.get(symbol)
+                    hold_hours = 0.0
+                    entry_order_id = ""
+                    strategy = "manual"
+                    if meta:
+                        entry_order_id = meta.get("order_id", "")
+                        strategy = meta.get("strategy", "manual")
+                        entry_time_str = meta.get("entry_time", "")
+                        if entry_time_str:
+                            try:
+                                entry_time = datetime.fromisoformat(entry_time_str)
+                                hold_hours = (
+                                    datetime.now(timezone.utc) - entry_time
+                                ).total_seconds() / 3600
+                            except (ValueError, TypeError):
+                                pass
+
+                    self._trade_journal.record_exit(
+                        symbol=symbol,
+                        qty=qty,
+                        price=current_price,
+                        strategy=strategy,
+                        reason="manual_gui_close",
+                        pnl=pnl,
+                        hold_duration_hours=hold_hours,
+                        entry_order_id=entry_order_id,
+                    )
+                    self._position_store.remove(symbol)
+
                 self.after(500, self._refresh_positions)
                 self.after(500, self._refresh_account)
             except Exception as e:

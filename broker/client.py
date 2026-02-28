@@ -315,8 +315,8 @@ class AlpacaClient:
         return responses
 
     def close_position(self, symbol: str):
-        """Close a position for a specific symbol."""
-        self._trading.close_position(symbol)
+        """Close a position for a specific symbol (retries on transient errors)."""
+        _retry_api(lambda: self._trading.close_position(symbol))
         logger.info("Closed position for %s", symbol)
 
     # ── Assets ───────────────────────────────────────────────────────────

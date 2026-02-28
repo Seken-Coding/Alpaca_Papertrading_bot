@@ -23,6 +23,24 @@ class Settings:
         # Maximum bracket orders the engine may place in a single scan run.
         self.max_orders_per_scan: int = int(os.getenv("MAX_ORDERS_PER_SCAN", "3"))
 
+        # ── Position monitor ────────────────────────────────────────
+        self.position_monitor: bool = (
+            os.getenv("POSITION_MONITOR", "true").lower() == "true"
+        )
+        self.trailing_stop_pct: float = float(
+            os.getenv("TRAILING_STOP_PCT", "1.0")
+        )
+        self.max_hold_days: int = int(os.getenv("MAX_HOLD_DAYS", "5"))
+
+        # ── Market regime filter ────────────────────────────────────
+        self.regime_filter: bool = (
+            os.getenv("REGIME_FILTER", "false").lower() == "true"
+        )
+
+        # ── Scan time window (HH:MM in US/Eastern) ─────────────────
+        self.scan_start_et: str = os.getenv("SCAN_START_ET", "10:00")
+        self.scan_end_et: str = os.getenv("SCAN_END_ET", "15:30")
+
     @staticmethod
     def _require(name: str) -> str:
         value = os.getenv(name)
@@ -33,7 +51,10 @@ class Settings:
     def __repr__(self) -> str:
         return (
             f"Settings(paper={self.paper}, auto_execute={self.auto_execute}, "
-            f"scan_interval={self.scan_interval_min}m, max_orders={self.max_orders_per_scan})"
+            f"scan_interval={self.scan_interval_min}m, max_orders={self.max_orders_per_scan}, "
+            f"position_monitor={self.position_monitor}, trailing_stop={self.trailing_stop_pct}%, "
+            f"max_hold_days={self.max_hold_days}, regime_filter={self.regime_filter}, "
+            f"scan_window={self.scan_start_et}-{self.scan_end_et})"
         )
 
 
