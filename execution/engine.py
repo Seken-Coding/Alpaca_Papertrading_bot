@@ -162,7 +162,7 @@ class ExecutionEngine:
 
             # Skip if position already open
             if rec.symbol in open_symbols:
-                logger.debug("Skipping %s — position already open", rec.symbol)
+                logger.info("Skipping %s — position already open", rec.symbol)
                 summary.skipped.append(rec.symbol)
                 continue
 

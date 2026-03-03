@@ -102,24 +102,40 @@ def load_bars(
     # bar, regardless of the limit parameter.  We estimate the calendar days
     # needed to cover `limit` trading days (~1.5 cal days per trading day
     # plus a buffer for holidays).
+    api_limit = limit
     if start is None and limit is not None:
         lookback_days = int(limit * 1.5) + 10
         start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        # Don't pass limit to API — it caps TOTAL bars across all symbols,
+        # not per-symbol.  The start date bounds the date range instead.
+        api_limit = None
 
     logger.info(
         "Loading bars for %s | timeframe=%s | start=%s | end=%s | limit=%s",
-        symbols, timeframe, start, end, limit,
+        symbols, timeframe, start, end, api_limit,
     )
     raw = client.get_bars(
         symbols=symbols,
         timeframe=timeframe,
         start=start,
         end=end,
-        limit=limit,
+        limit=api_limit,
     )
     frames = bars_to_dataframe(raw)
+
+    # Log symbols the API didn't return at all
+    missing = set(symbols) - set(frames.keys())
+    if missing:
+        logger.warning(
+            "  API returned no data for %d symbols: %s",
+            len(missing), sorted(missing),
+        )
+
     validated: Dict[str, pd.DataFrame] = {}
     for sym, df in frames.items():
+        # Trim to requested limit per symbol (keep most recent bars)
+        if limit and len(df) > limit:
+            df = df.iloc[-limit:]
         logger.info("  %s: %d bars loaded", sym, len(df))
         if _validate_bars(sym, df):
             validated[sym] = df
