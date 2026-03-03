@@ -52,9 +52,9 @@ class MomentumStrategy(Strategy):
         # Momentum works in trending markets (ADX > 22). Below that, trend
         # crossovers are unreliable noise — skip rather than fire false signals.
         adx_val = float(latest.get("adx", 0))
-        trend_confirmed = adx_val > 22
+        trend_confirmed = adx_val > 15
         rvol_val = float(latest.get("rvol", 0))
-        high_volume = rvol_val > 1.2   # Volume ≥ 20% above 20-day average
+        high_volume = rvol_val > 0.8
 
         # ── Trend direction ──────────────────────────────────────────
         above_sma50 = price > float(latest["sma_50"])

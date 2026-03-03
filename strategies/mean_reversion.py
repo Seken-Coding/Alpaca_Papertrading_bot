@@ -51,14 +51,14 @@ class MeanReversionStrategy(Strategy):
         # Mean reversion is dangerous in strong trends (ADX > 25) — catching
         # a falling knife or shorting a breakout.  Skip entirely if trending.
         adx_val = float(latest.get("adx", 0))
-        if adx_val > 25:
+        if adx_val > 35:
             logger.info(
-                "%s MeanReversion: ADX=%.0f > 25 — trending, skipped",
+                "%s MeanReversion: ADX=%.0f > 35 — strongly trending, skipped",
                 symbol, adx_val,
             )
             return TradeSignal(
                 Signal.HOLD, symbol, price,
-                f"Trending market (ADX={adx_val:.0f} > 25) — mean reversion skipped",
+                f"Strongly trending market (ADX={adx_val:.0f} > 35) — mean reversion skipped",
             )
 
         bullish: list[str] = []
