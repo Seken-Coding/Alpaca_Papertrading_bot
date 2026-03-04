@@ -19,6 +19,7 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import (
     AssetClass,
+    AssetStatus,
     OrderClass,
     OrderSide,
     OrderStatus,
@@ -322,9 +323,12 @@ class AlpacaClient:
     # ── Assets ───────────────────────────────────────────────────────────
 
     def get_assets(self, asset_class: AssetClass = AssetClass.US_EQUITY) -> list:
-        """Return tradable assets for the given asset class."""
-        req = GetAssetsRequest(asset_class=asset_class)
-        return self._trading.get_all_assets(req)
+        """Return active tradable assets for the given asset class."""
+        req = GetAssetsRequest(
+            asset_class=asset_class,
+            status=AssetStatus.ACTIVE,
+        )
+        return _retry_api(lambda: self._trading.get_all_assets(req))
 
     # ── Market clock ─────────────────────────────────────────────────────
 

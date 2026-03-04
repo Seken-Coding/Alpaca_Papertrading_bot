@@ -134,6 +134,8 @@ def _scan_and_execute(
     scanner = StrategyScanner(
         client=client,
         strategies=[MomentumStrategy(), MeanReversionStrategy()],
+        universe_mode=settings.universe_mode,
+        universe_cache_ttl=settings.universe_cache_ttl,
     )
     recommendations = scanner.scan()
 

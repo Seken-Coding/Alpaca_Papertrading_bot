@@ -41,6 +41,11 @@ class Settings:
         self.scan_start_et: str = os.getenv("SCAN_START_ET", "10:00")
         self.scan_end_et: str = os.getenv("SCAN_END_ET", "15:30")
 
+        # ── Universe discovery ──────────────────────────────────────
+        # "static" = hardcoded SP500_SAMPLE, "dynamic" = Alpaca get_assets()
+        self.universe_mode: str = os.getenv("UNIVERSE", "static").lower()
+        self.universe_cache_ttl: int = int(os.getenv("UNIVERSE_CACHE_TTL", "86400"))
+
     @staticmethod
     def _require(name: str) -> str:
         value = os.getenv(name)
@@ -54,7 +59,8 @@ class Settings:
             f"scan_interval={self.scan_interval_min}m, max_orders={self.max_orders_per_scan}, "
             f"position_monitor={self.position_monitor}, trailing_stop={self.trailing_stop_pct}%, "
             f"max_hold_days={self.max_hold_days}, regime_filter={self.regime_filter}, "
-            f"scan_window={self.scan_start_et}-{self.scan_end_et})"
+            f"scan_window={self.scan_start_et}-{self.scan_end_et}, "
+            f"universe={self.universe_mode})"
         )
 
 

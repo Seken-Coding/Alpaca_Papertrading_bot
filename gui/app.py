@@ -869,6 +869,8 @@ class TradingApp(tk.Tk):
                 scanner = StrategyScanner(
                     client=self.client,
                     strategies=[MomentumStrategy(), MeanReversionStrategy()],
+                    universe_mode=settings.universe_mode,
+                    universe_cache_ttl=settings.universe_cache_ttl,
                 )
                 recs = scanner.scan()
                 self.after(0, self._populate_recommendations, recs)

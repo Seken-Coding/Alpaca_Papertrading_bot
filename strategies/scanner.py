@@ -56,11 +56,15 @@ class StrategyScanner:
         screener_config: Optional[ScreenerConfig] = None,
         universe: Optional[List[str]] = None,
         lookback_bars: int = 500,
+        universe_mode: str = "static",
+        universe_cache_ttl: int = 86400,
     ):
         self.client = client
         self.strategies = strategies
         self.screener = StockScreener(client, screener_config, universe)
         self.lookback_bars = lookback_bars
+        self.universe_mode = universe_mode
+        self.universe_cache_ttl = universe_cache_ttl
 
     def scan(self) -> List[Recommendation]:
         """Execute the full scan pipeline and return sorted recommendations.
@@ -69,7 +73,10 @@ class StrategyScanner:
         Results are sorted by strength descending.
         """
         # 1 — Screen
-        symbols = self.screener.screen()
+        symbols = self.screener.screen(
+            universe_mode=self.universe_mode,
+            cache_ttl=self.universe_cache_ttl,
+        )
         if not symbols:
             logger.warning("Screener returned zero candidates")
             return []

@@ -2,15 +2,21 @@
 
 The screener applies lightweight filters (tradable, active, price range,
 minimum volume) so that strategies only analyse liquid, actionable stocks.
+
+Supports two modes:
+  - static  (default): uses the hardcoded SP500_SAMPLE list
+  - dynamic: discovers all tradable US stocks via Alpaca's get_assets() API
 """
 
 import logging
+import time as _time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
 from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.enums import AssetExchange
 from broker.client import AlpacaClient
 from analysis.data_loader import load_bars
 
@@ -24,7 +30,8 @@ class ScreenerConfig:
     max_price: float = 1_000.0
     min_avg_volume: float = 500_000.0   # average daily volume
     lookback_bars: int = 50             # days of history for volume check
-    max_candidates: int = 50            # cap the watchlist size
+    max_candidates: int = 100           # cap the watchlist size
+    batch_size: int = 50                # symbols per load_bars() call
 
 
 # ── Default watchlists ───────────────────────────────────────────────────
@@ -40,6 +47,20 @@ SP500_SAMPLE: List[str] = [
     "AMD", "INTC", "CAT", "GS", "AMGN",
 ]
 
+# Regulated US equity exchanges (excludes OTC, crypto, FTX, etc.)
+_ALLOWED_EXCHANGES: frozenset = frozenset({
+    AssetExchange.NYSE,
+    AssetExchange.NASDAQ,
+    AssetExchange.ARCA,
+    AssetExchange.NYSEARCA,
+    AssetExchange.AMEX,
+    AssetExchange.BATS,
+    AssetExchange.ASCX,
+})
+
+# Module-level cache: (symbols_list, monotonic_timestamp)
+_asset_cache: tuple[list[str], float] | None = None
+
 
 class StockScreener:
     """Filter a universe of tickers down to tradable candidates."""
@@ -54,31 +75,59 @@ class StockScreener:
         self.config = config or ScreenerConfig()
         self.universe = universe or SP500_SAMPLE
 
-    def screen(self) -> List[str]:
+    def screen(
+        self,
+        universe_mode: str = "static",
+        cache_ttl: int = 86400,
+    ) -> List[str]:
         """Return a list of symbols that pass all filters.
 
-        Steps
-        -----
-        1. Fetch recent daily bars for the entire universe (single API call).
-        2. Drop symbols with insufficient data.
-        3. Filter on latest close price range.
-        4. Filter on average daily volume.
-        5. Sort by volume descending and cap at max_candidates.
+        Parameters
+        ----------
+        universe_mode : str
+            "static" uses self.universe (SP500_SAMPLE by default).
+            "dynamic" discovers tradable US stocks via get_assets().
+        cache_ttl : int
+            Seconds to reuse the cached asset list (dynamic mode only).
         """
+        if universe_mode == "dynamic":
+            symbols_to_screen = self._discover_universe(cache_ttl)
+        else:
+            symbols_to_screen = self.universe
+
         logger.info(
             "Screening %d symbols (price %.0f–%.0f, min vol %.0f) ...",
-            len(self.universe),
+            len(symbols_to_screen),
             self.config.min_price,
             self.config.max_price,
             self.config.min_avg_volume,
         )
 
-        frames = load_bars(
-            self.client,
-            symbols=self.universe,
-            timeframe=TimeFrame.Day,
-            limit=self.config.lookback_bars,
+        # Batch load_bars() to avoid sending hundreds of symbols in one call
+        frames: Dict[str, pd.DataFrame] = {}
+        batch_size = self.config.batch_size
+        batches = [
+            symbols_to_screen[i : i + batch_size]
+            for i in range(0, len(symbols_to_screen), batch_size)
+        ]
+        logger.info(
+            "Loading bars in %d batch(es) of up to %d symbols ...",
+            len(batches), batch_size,
         )
+        for idx, batch in enumerate(batches, 1):
+            try:
+                batch_frames = load_bars(
+                    self.client,
+                    symbols=batch,
+                    timeframe=TimeFrame.Day,
+                    limit=self.config.lookback_bars,
+                )
+                frames.update(batch_frames)
+            except Exception as exc:
+                logger.warning(
+                    "Batch %d/%d failed (%d symbols): %s — skipping batch",
+                    idx, len(batches), len(batch), exc,
+                )
 
         candidates: List[dict] = []
         min_bars = self.config.lookback_bars // 2
@@ -121,5 +170,48 @@ class StockScreener:
         candidates = candidates[: self.config.max_candidates]
 
         symbols = [c["symbol"] for c in candidates]
-        logger.info("Screener passed %d / %d symbols", len(symbols), len(self.universe))
+        logger.info(
+            "Screener passed %d / %d symbols",
+            len(symbols), len(symbols_to_screen),
+        )
         return symbols
+
+    def _discover_universe(self, cache_ttl: int) -> list[str]:
+        """Fetch tradable US equity symbols from Alpaca, with module-level caching."""
+        global _asset_cache
+
+        now = _time.monotonic()
+        if _asset_cache is not None:
+            symbols, fetched_at = _asset_cache
+            age = now - fetched_at
+            if age < cache_ttl:
+                logger.info(
+                    "Asset cache hit — %d symbols (age %.0fs / ttl %ds)",
+                    len(symbols), age, cache_ttl,
+                )
+                return symbols
+
+        logger.info("Asset cache miss — fetching asset list from Alpaca ...")
+        try:
+            assets = self.client.get_assets()
+        except Exception as exc:
+            logger.error(
+                "get_assets() failed: %s — falling back to SP500_SAMPLE (%d symbols)",
+                exc, len(SP500_SAMPLE),
+            )
+            return list(SP500_SAMPLE)
+
+        total = len(assets)
+        filtered = [
+            a.symbol
+            for a in assets
+            if a.tradable and a.exchange in _ALLOWED_EXCHANGES
+        ]
+
+        logger.info(
+            "Asset discovery: %d total → %d after tradable+exchange filter",
+            total, len(filtered),
+        )
+
+        _asset_cache = (filtered, now)
+        return filtered
