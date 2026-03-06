@@ -1,0 +1,50 @@
+# Alpaca Paper Trading Bot — Intraday systemd service unit
+#
+# Runs the intraday momentum/mean-reversion scanner and execution engine.
+# Requires AUTO_EXECUTE=true in .env for automatic order placement.
+#
+# Installation (run as root on the VPS):
+#   cp intraday-bot.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable intraday-bot
+#   systemctl start  intraday-bot
+#
+# Useful commands:
+#   systemctl status  intraday-bot
+#   systemctl stop    intraday-bot
+#   journalctl -u intraday-bot -f
+
+[Unit]
+Description=Intraday Trading Bot (Alpaca)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trading
+Group=trading
+WorkingDirectory=/opt/trading-bot
+
+EnvironmentFile=/opt/trading-bot/.env
+
+ExecStart=/opt/trading-bot/venv/bin/python main.py
+
+# ── Restart policy ──────────────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=30s
+
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+StandardOutput=append:/opt/trading-bot/logs/app.log
+StandardError=append:/opt/trading-bot/logs/errors.log
+
+# ── Hardening (optional but recommended) ────────────────────────────────────
+# PrivateTmp=yes
+# NoNewPrivileges=yes
+# ProtectSystem=strict
+# ReadWritePaths=/opt/trading-bot/logs /opt/trading-bot/data
+
+[Install]
+WantedBy=multi-user.target
