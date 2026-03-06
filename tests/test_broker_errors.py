@@ -50,7 +50,8 @@ def test_api_error_html_body_extracts_title():
 def test_api_error_html_body_no_title():
     exc = _FakeAPIError(504, body="<html><body>no title here</body></html>")
     result = clean_broker_error(exc)
-    assert result == "API error (HTTP 504)"
+    assert "API error (HTTP 504)" in result
+    assert "<html" not in result
 
 
 def test_api_error_plain_text_body():
@@ -100,3 +101,33 @@ def test_html_body_non_auth_without_status_code():
     result = clean_broker_error(exc)
     assert "502" in result
     assert "<html" not in result
+
+
+def test_exact_nginx_401_html():
+    """Reproduce the exact error from production logs (nginx 401 HTML)."""
+    html = (
+        "<html>\n"
+        "<head><title>401 Authorization Required</title></head>\n"
+        "<body>\n"
+        "<center><h1>401 Authorization Required</h1></center>\n"
+        "<hr><center>nginx</center>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+    exc = Exception(html)
+    result = clean_broker_error(exc)
+    assert "Authentication failed" in result
+    assert "HTTP 401" in result
+    assert "ALPACA_API_KEY" in result
+    assert "<html" not in result
+
+
+def test_message_attribute_with_html_is_stripped():
+    """If exc.message contains HTML, it should be stripped."""
+    exc = _FakeAPIError(
+        502,
+        message="<html><head><title>502 Bad Gateway</title></head></html>",
+    )
+    result = clean_broker_error(exc)
+    assert "<html" not in result
+    assert "502 Bad Gateway" in result

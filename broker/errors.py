@@ -3,39 +3,56 @@
 import re
 
 
+def _strip_html(text: str) -> str:
+    """Strip HTML tags and collapse whitespace, returning plain text."""
+    if "<html" not in text.lower():
+        return text
+    # Try to extract just the <title> for a concise message
+    title_match = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE)
+    if title_match:
+        return title_match.group(1).strip()
+    # Fallback: remove all tags and collapse whitespace
+    stripped = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _extract_status_code(exc: Exception) -> int | None:
+    """Try to find an HTTP status code from the exception."""
+    # alpaca-py APIError: exc.status_code
+    code = getattr(exc, "status_code", None)
+    if code is not None:
+        try:
+            return int(code)
+        except (ValueError, TypeError):
+            pass
+
+    # requests HTTPError: exc.response.status_code
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        code = getattr(resp, "status_code", None)
+        if code is not None:
+            try:
+                return int(code)
+            except (ValueError, TypeError):
+                pass
+
+    # Last resort: extract from HTML title like "401 Authorization Required"
+    raw = str(exc)
+    title_match = re.search(r"<title>(\d{3})\b[^<]*</title>", raw, re.IGNORECASE)
+    if title_match:
+        return int(title_match.group(1))
+
+    return None
+
+
 def clean_broker_error(exc: Exception) -> str:
     """Return a concise, log-friendly message for a broker exception.
 
-    For alpaca-py APIError instances, extracts the HTTP status code and
-    produces a short description instead of dumping raw HTML.
-    For auth errors (401/403), includes a hint about credentials.
-    For all other exceptions, returns str(exc) unchanged.
+    Never returns raw HTML — always strips it to a readable summary.
+    For auth errors (401/403), includes a hint about checking credentials.
     """
-    # Try multiple locations where the status code may live:
-    # - alpaca-py APIError stores it as exc.status_code
-    # - requests HTTPError stores it as exc.response.status_code
-    status_code = getattr(exc, "status_code", None)
-    if status_code is None:
-        resp = getattr(exc, "response", None)
-        if resp is not None:
-            status_code = getattr(resp, "status_code", None)
-
+    status_code = _extract_status_code(exc)
     raw = str(exc)
-
-    # Even without a status code, try to detect auth errors from HTML body
-    if status_code is None:
-        if "<html" in raw.lower():
-            title_match = re.search(r"<title>(.*?)</title>", raw, re.IGNORECASE)
-            # Detect auth-related HTTP errors from the HTML title
-            if title_match:
-                title = title_match.group(1)
-                code_match = re.search(r"(\d{3})", title)
-                if code_match:
-                    status_code = int(code_match.group(1))
-            if status_code is None:
-                return f"API error: {title_match.group(1) if title_match else 'unknown HTML error'}"
-        else:
-            return raw
 
     # Auth errors get a specific actionable message
     if status_code in (401, 403):
@@ -44,16 +61,15 @@ def clean_broker_error(exc: Exception) -> str:
             "— check ALPACA_API_KEY and ALPACA_SECRET_KEY"
         )
 
-    # Other API errors: extract a short message, stripping any HTML
-    message = getattr(exc, "message", None)
-    if message:
-        return f"API error (HTTP {status_code}): {message}"
-
-    # Fallback: use str(exc) but strip HTML tags if present
-    if "<html" in raw.lower():
-        title_match = re.search(r"<title>(.*?)</title>", raw, re.IGNORECASE)
-        if title_match:
-            return f"API error (HTTP {status_code}): {title_match.group(1)}"
+    # For other status codes, build a clean message
+    if status_code is not None:
+        message = getattr(exc, "message", None)
+        if message:
+            return f"API error (HTTP {status_code}): {_strip_html(message)}"
+        clean = _strip_html(raw)
+        if clean:
+            return f"API error (HTTP {status_code}): {clean}"
         return f"API error (HTTP {status_code})"
 
-    return f"API error (HTTP {status_code}): {raw}"
+    # No status code found — return str(exc) but strip any HTML
+    return _strip_html(raw) or raw
