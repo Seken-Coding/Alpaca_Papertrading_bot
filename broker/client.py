@@ -4,6 +4,8 @@ import logging
 import time as _time
 from typing import List, Optional
 
+from broker.errors import clean_broker_error
+
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     GetAssetsRequest,
@@ -348,9 +350,8 @@ class AlpacaClient:
             return bool(clock.is_open)
         except Exception as exc:
             logger.error(
-                "Failed to check market status after retries: %s — "
-                "assuming market closed",
-                exc,
+                "Failed to check market status: %s — assuming market closed",
+                clean_broker_error(exc),
             )
             return False
 
@@ -388,7 +389,8 @@ class AlpacaClient:
                 # pending_cancel, replaced, etc. — keep polling
             except Exception as exc:
                 logger.warning(
-                    "Could not poll order %s status: %s", order_id, exc
+                    "Could not poll order %s status: %s", order_id,
+                    clean_broker_error(exc),
                 )
             _time.sleep(1.0)
 

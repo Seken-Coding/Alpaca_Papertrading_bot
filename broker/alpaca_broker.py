@@ -13,6 +13,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from broker.base import BrokerBase
+from broker.errors import clean_broker_error
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class AlpacaBroker(BrokerBase):
                 "buying_power": float(account.buying_power),
             }
         except Exception as e:
-            logger.error("Failed to get account: %s", e)
+            logger.error("Failed to get account: %s", clean_broker_error(e))
             raise
 
     def get_positions(self) -> list[dict]:
@@ -83,7 +84,7 @@ class AlpacaBroker(BrokerBase):
                 })
             return result
         except Exception as e:
-            logger.error("Failed to get positions: %s", e)
+            logger.error("Failed to get positions: %s", clean_broker_error(e))
             raise
 
     def get_bars(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
@@ -138,7 +139,7 @@ class AlpacaBroker(BrokerBase):
             return df
 
         except Exception as e:
-            logger.error("Failed to get bars for %s: %s", symbol, e)
+            logger.error("Failed to get bars for %s: %s", symbol, clean_broker_error(e))
             return pd.DataFrame()
 
     def submit_order(
@@ -218,7 +219,7 @@ class AlpacaBroker(BrokerBase):
             return result
 
         except Exception as e:
-            logger.error("Failed to submit order %s %s %d: %s", side, symbol, qty, e)
+            logger.error("Failed to submit order %s %s %d: %s", side, symbol, qty, clean_broker_error(e))
             raise
 
     def cancel_order(self, order_id: str) -> bool:
@@ -228,7 +229,7 @@ class AlpacaBroker(BrokerBase):
             logger.info("Order cancelled: %s", order_id)
             return True
         except Exception as e:
-            logger.error("Failed to cancel order %s: %s", order_id, e)
+            logger.error("Failed to cancel order %s: %s", order_id, clean_broker_error(e))
             return False
 
     def is_market_open(self) -> bool:
@@ -237,7 +238,7 @@ class AlpacaBroker(BrokerBase):
             clock = self._trading_client.get_clock()
             return clock.is_open
         except Exception as e:
-            logger.error("Failed to get market status: %s", e)
+            logger.error("Failed to get market status: %s", clean_broker_error(e))
             return False
 
     def get_clock(self) -> dict:
@@ -250,7 +251,7 @@ class AlpacaBroker(BrokerBase):
                 "next_close": clock.next_close,
             }
         except Exception as e:
-            logger.error("Failed to get clock: %s", e)
+            logger.error("Failed to get clock: %s", clean_broker_error(e))
             return {
                 "is_open": False,
                 "next_open": None,
@@ -270,7 +271,7 @@ class AlpacaBroker(BrokerBase):
                 "easy_to_borrow": asset.easy_to_borrow,
             }
         except Exception as e:
-            logger.warning("Failed to get asset info for %s: %s", symbol, e)
+            logger.warning("Failed to get asset info for %s: %s", symbol, clean_broker_error(e))
             return None
 
     def get_all_assets(self, exchange: str = None) -> list[dict]:
@@ -296,5 +297,5 @@ class AlpacaBroker(BrokerBase):
                 })
             return result
         except Exception as e:
-            logger.error("Failed to get assets: %s", e)
+            logger.error("Failed to get assets: %s", clean_broker_error(e))
             return []
