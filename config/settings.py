@@ -21,7 +21,7 @@ class Settings:
         self.scan_interval_min: int = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
 
         # Maximum bracket orders the engine may place in a single scan run.
-        self.max_orders_per_scan: int = int(os.getenv("MAX_ORDERS_PER_SCAN", "3"))
+        self.max_orders_per_scan: int = int(os.getenv("MAX_ORDERS_PER_SCAN", "5"))
 
         # ── Position monitor ────────────────────────────────────────
         self.position_monitor: bool = (
@@ -64,4 +64,24 @@ class Settings:
         )
 
 
-settings = Settings()
+def _get_settings() -> Settings:
+    """Lazy singleton — only instantiated on first access."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
+
+_settings: Settings | None = None
+
+class _SettingsProxy:
+    """Proxy that defers Settings() construction until first attribute access.
+
+    This prevents import-time crashes when env vars are not set (e.g. in tests).
+    """
+    def __getattr__(self, name: str):
+        return getattr(_get_settings(), name)
+
+    def __repr__(self) -> str:
+        return repr(_get_settings())
+
+settings = _SettingsProxy()

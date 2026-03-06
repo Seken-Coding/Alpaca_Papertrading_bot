@@ -84,7 +84,7 @@ class AlpacaBroker(BrokerBase):
             return result
         except Exception as e:
             logger.error("Failed to get positions: %s", e)
-            return []
+            raise
 
     def get_bars(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
         """Fetch historical bars from Alpaca data API."""

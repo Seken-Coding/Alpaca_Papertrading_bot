@@ -48,15 +48,14 @@ SP500_SAMPLE: List[str] = [
 ]
 
 # Regulated US equity exchanges (excludes OTC, crypto, FTX, etc.)
-_ALLOWED_EXCHANGES: frozenset = frozenset({
-    AssetExchange.NYSE,
-    AssetExchange.NASDAQ,
-    AssetExchange.ARCA,
-    AssetExchange.NYSEARCA,
-    AssetExchange.AMEX,
-    AssetExchange.BATS,
-    AssetExchange.ASCX,
-})
+# Use getattr to gracefully handle enum values that may not exist in all alpaca-py versions.
+_ALLOWED_EXCHANGES: frozenset = frozenset(
+    v for v in (
+        getattr(AssetExchange, name, None)
+        for name in ("NYSE", "NASDAQ", "ARCA", "NYSEARCA", "AMEX", "BATS", "ASCX")
+    )
+    if v is not None
+)
 
 # Module-level cache: (symbols_list, monotonic_timestamp)
 _asset_cache: tuple[list[str], float] | None = None
