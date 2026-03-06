@@ -29,7 +29,7 @@ WorkingDirectory=/opt/trading-bot
 EnvironmentFile=/opt/trading-bot/.env
 
 # Use the virtualenv Python so all packages are available
-ExecStart=/opt/trading-bot/venv/bin/python cest_main.py
+ExecStart=/opt/trading-bot/venv/bin/python cest_main.py --schedule
 
 # ── Restart policy ──────────────────────────────────────────────────────────
 # Restart on non-zero exit (crash) but NOT on clean exit (systemctl stop).
@@ -53,7 +53,7 @@ StandardError=append:/opt/trading-bot/logs/errors.log
 # PrivateTmp=yes
 # NoNewPrivileges=yes
 # ProtectSystem=strict
-# ReadWritePaths=/opt/trading-bot/logs
+# ReadWritePaths=/opt/trading-bot/logs /opt/trading-bot/data
 
 [Install]
 WantedBy=multi-user.target
