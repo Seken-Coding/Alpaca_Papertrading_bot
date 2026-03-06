@@ -52,21 +52,39 @@ class RiskConfig:
     """
 
     # ── Position sizing ──────────────────────────────────────────────
-    max_position_pct: float    = float(os.getenv("MAX_POSITION_PCT",    "0.05"))
-    risk_per_trade_pct: float  = float(os.getenv("RISK_PER_TRADE_PCT",  "0.01"))
-    atr_stop_multiplier: float = float(os.getenv("ATR_STOP_MULTIPLIER", "2.0"))
-    min_risk_reward: float     = float(os.getenv("MIN_RISK_REWARD",     "1.5"))
+    max_position_pct: float    = 0.05
+    risk_per_trade_pct: float  = 0.01
+    atr_stop_multiplier: float = 2.0
+    min_risk_reward: float     = 1.5
 
     # ── Portfolio limits ─────────────────────────────────────────────
-    max_positions: int         = int(os.getenv("MAX_POSITIONS",    "10"))
-    min_buying_power: float    = float(os.getenv("MIN_BUYING_POWER", "500.0"))
+    max_positions: int         = 10
+    min_buying_power: float    = 500.0
 
     # ── Daily / drawdown circuit breakers ────────────────────────────
-    max_daily_loss_pct: float  = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.03"))
-    max_drawdown_pct: float    = float(os.getenv("MAX_DRAWDOWN_PCT",   "0.10"))
+    max_daily_loss_pct: float  = 0.03
+    max_drawdown_pct: float    = 0.10
 
     # ── Signal quality filter ────────────────────────────────────────
-    min_score_threshold: float = float(os.getenv("MIN_SCORE_THRESHOLD", "62.0"))
+    min_score_threshold: float = 62.0
+
+    def __post_init__(self):
+        """Override defaults with environment variables if set."""
+        env_map = {
+            "MAX_POSITION_PCT": ("max_position_pct", float),
+            "RISK_PER_TRADE_PCT": ("risk_per_trade_pct", float),
+            "ATR_STOP_MULTIPLIER": ("atr_stop_multiplier", float),
+            "MIN_RISK_REWARD": ("min_risk_reward", float),
+            "MAX_POSITIONS": ("max_positions", int),
+            "MIN_BUYING_POWER": ("min_buying_power", float),
+            "MAX_DAILY_LOSS_PCT": ("max_daily_loss_pct", float),
+            "MAX_DRAWDOWN_PCT": ("max_drawdown_pct", float),
+            "MIN_SCORE_THRESHOLD": ("min_score_threshold", float),
+        }
+        for env_key, (attr, cast) in env_map.items():
+            val = os.getenv(env_key)
+            if val is not None:
+                setattr(self, attr, cast(val))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

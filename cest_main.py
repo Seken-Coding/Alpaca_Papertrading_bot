@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import logging
+import logging.handlers
 import signal
 import sys
 import time
@@ -423,7 +424,6 @@ def run_scheduled():
 
 
 def main():
-    import logging.handlers
     setup_logging()
 
     parser = argparse.ArgumentParser(description="CEST Trading Bot")

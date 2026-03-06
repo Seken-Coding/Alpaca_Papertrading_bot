@@ -92,7 +92,8 @@ class PositionMonitor:
             and settings.trailing_stop_pct > 0
         ):
             entry_atr = meta.get("entry_atr", 0.0)
-            gain = current_price - avg_entry
+            is_long = qty > 0
+            gain = (current_price - avg_entry) if is_long else (avg_entry - current_price)
 
             if entry_atr > 0 and gain >= _TRAILING_TRIGGER_MULTIPLIER * entry_atr:
                 logger.info(
@@ -162,11 +163,12 @@ class PositionMonitor:
                 cancelled, symbol,
             )
 
-            # Place trailing stop
+            # Place trailing stop — SELL to close longs, BUY to close shorts
+            close_side = OrderSide.SELL if qty > 0 else OrderSide.BUY
             order = self.client.trailing_stop_order(
                 symbol=symbol,
-                qty=qty,
-                side=OrderSide.SELL,
+                qty=abs(qty),
+                side=close_side,
                 trail_percent=settings.trailing_stop_pct,
             )
             self.store.mark_trailing_upgraded(symbol)

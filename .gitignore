@@ -20,8 +20,12 @@ env/
 
 # Environment / Secrets
 .env
-*.env
+.env.*
+!.env.example
 config/secrets.*
+
+# Data files (bot state, trade logs)
+data/
 
 # Logs
 logs/
