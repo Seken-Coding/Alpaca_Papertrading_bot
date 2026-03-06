@@ -13,14 +13,15 @@
 #   3. Copies the bot to /opt/trading-bot/
 #   4. Creates a Python virtualenv and installs dependencies
 #   5. Prompts you to fill in your .env (API keys, automation settings)
-#   6. Installs and enables the systemd service
+#   6. Installs and enables two systemd services:
+#      - trading-bot           (CEST daily bot — runs once per day)
+#      - trading-bot-intraday  (intraday scanner — scans every few minutes)
 # =============================================================================
 
 set -euo pipefail
 
 BOT_DIR="/opt/trading-bot"
 BOT_USER="trading"
-SERVICE_NAME="trading-bot"
 PYTHON_BIN="python3.13"
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
@@ -157,38 +158,52 @@ else
 fi
 
 # =============================================================================
-# 6. Systemd service
+# 6. Systemd services (CEST daily + intraday scanner)
 # =============================================================================
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+CEST_SERVICE="trading-bot"
+INTRADAY_SERVICE="trading-bot-intraday"
 
-info "Installing systemd service to $SERVICE_FILE ..."
-cp "$BOT_DIR/deploy/trading-bot.service" "$SERVICE_FILE"
-chmod 644 "$SERVICE_FILE"
+info "Installing systemd services ..."
+cp "$BOT_DIR/deploy/trading-bot.service" "/etc/systemd/system/${CEST_SERVICE}.service"
+cp "$BOT_DIR/deploy/trading-bot-intraday.service" "/etc/systemd/system/${INTRADAY_SERVICE}.service"
+chmod 644 "/etc/systemd/system/${CEST_SERVICE}.service"
+chmod 644 "/etc/systemd/system/${INTRADAY_SERVICE}.service"
 
 systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
+systemctl enable "$CEST_SERVICE"
+systemctl enable "$INTRADAY_SERVICE"
 
 echo ""
-info "Service installed and enabled for startup on boot."
-info "Starting service now ..."
-systemctl start "$SERVICE_NAME"
+info "Both services installed and enabled for startup on boot."
+info "Starting services now ..."
+systemctl start "$CEST_SERVICE"
+systemctl start "$INTRADAY_SERVICE"
 
-sleep 3   # Give it a moment to initialise
+sleep 3   # Give them a moment to initialise
 
 echo ""
 echo "================================================================"
-echo "  DEPLOYMENT COMPLETE"
+echo "  DEPLOYMENT COMPLETE — two services running"
 echo "================================================================"
-systemctl status "$SERVICE_NAME" --no-pager || true
+echo ""
+echo "CEST daily bot (runs once per day at scheduled time):"
+systemctl status "$CEST_SERVICE" --no-pager || true
+echo ""
+echo "Intraday scanner (scans every few minutes during market hours):"
+systemctl status "$INTRADAY_SERVICE" --no-pager || true
 echo ""
 echo "Useful commands:"
-echo "  systemctl status  $SERVICE_NAME    # check if running"
-echo "  systemctl stop    $SERVICE_NAME    # clean shutdown"
-echo "  systemctl restart $SERVICE_NAME    # restart"
-echo "  journalctl -u $SERVICE_NAME -f     # live log tail"
-echo "  cat $BOT_DIR/logs/heartbeat        # verify bot is alive"
-echo "  tail -f $BOT_DIR/logs/app.log      # full application log"
-echo "  tail -f $BOT_DIR/logs/trades.log   # order audit trail"
+echo "  systemctl status  $CEST_SERVICE         # CEST daily bot"
+echo "  systemctl status  $INTRADAY_SERVICE     # intraday scanner"
+echo "  systemctl stop    $CEST_SERVICE         # stop CEST"
+echo "  systemctl stop    $INTRADAY_SERVICE     # stop intraday"
+echo "  systemctl restart $CEST_SERVICE         # restart CEST"
+echo "  systemctl restart $INTRADAY_SERVICE     # restart intraday"
+echo "  journalctl -u $CEST_SERVICE -f          # CEST live log"
+echo "  journalctl -u $INTRADAY_SERVICE -f      # intraday live log"
+echo "  cat $BOT_DIR/logs/heartbeat             # verify intraday bot is alive"
+echo "  tail -f $BOT_DIR/logs/app.log           # full application log"
+echo "  tail -f $BOT_DIR/logs/trades.log        # order audit trail"
 echo ""
 echo "Log files are in: $BOT_DIR/logs/"
 echo "Config file:      $ENV_FILE"

@@ -1,0 +1,51 @@
+# Alpaca Intraday Trading Bot — systemd service unit
+#
+# Scans every SCAN_INTERVAL_MIN minutes while the market is open.
+# Requires AUTO_EXECUTE=true in .env to enter continuous scheduler mode.
+#
+# Installation (run as root on the VPS, or use setup.sh):
+#   cp trading-bot-intraday.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable trading-bot-intraday
+#   systemctl start  trading-bot-intraday
+#
+# Useful commands:
+#   systemctl status  trading-bot-intraday
+#   systemctl stop    trading-bot-intraday
+#   journalctl -u trading-bot-intraday -f
+#   cat /opt/trading-bot/logs/heartbeat
+
+[Unit]
+Description=Intraday Trading Bot (Alpaca — scans every few minutes during market hours)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trading
+Group=trading
+WorkingDirectory=/opt/trading-bot
+
+EnvironmentFile=/opt/trading-bot/.env
+
+ExecStart=/opt/trading-bot/venv/bin/python main.py
+
+# ── Restart policy ──────────────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=30s
+
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+StandardOutput=append:/opt/trading-bot/logs/app.log
+StandardError=append:/opt/trading-bot/logs/intraday-errors.log
+
+# ── Hardening (optional but recommended) ────────────────────────────────────
+# PrivateTmp=yes
+# NoNewPrivileges=yes
+# ProtectSystem=strict
+# ReadWritePaths=/opt/trading-bot/logs
+
+[Install]
+WantedBy=multi-user.target
