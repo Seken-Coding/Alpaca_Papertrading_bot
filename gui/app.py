@@ -883,6 +883,8 @@ class TradingApp(tk.Tk):
                         risk_manager=self.risk_manager,
                         max_orders=settings.max_orders_per_scan,
                         require_market_open=True,
+                        position_store=self._position_store,
+                        trade_journal=self._trade_journal,
                     )
                     summary = engine.execute(recs)
                     self.after(0, self._on_execution_complete, summary)

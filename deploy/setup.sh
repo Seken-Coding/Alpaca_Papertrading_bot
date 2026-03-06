@@ -36,8 +36,8 @@ err()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOT_SOURCE="$(dirname "$SCRIPT_DIR")"   # parent of deploy/
 
-if [[ ! -f "$BOT_SOURCE/main.py" ]]; then
-    err "Could not find main.py in $BOT_SOURCE. Run this script from the deploy/ directory."
+if [[ ! -f "$BOT_SOURCE/cest_main.py" ]]; then
+    err "Could not find cest_main.py in $BOT_SOURCE. Run this script from the deploy/ directory."
 fi
 
 info "Bot source directory: $BOT_SOURCE"

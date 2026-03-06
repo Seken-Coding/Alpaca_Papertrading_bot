@@ -13,7 +13,7 @@
 #   cat /opt/trading-bot/logs/heartbeat  # verify bot is alive
 
 [Unit]
-Description=Alpaca Paper Trading Bot
+Description=CEST Trading Bot (Alpaca)
 # Wait for network connectivity before starting (Alpaca API requires internet)
 After=network-online.target
 Wants=network-online.target
@@ -29,7 +29,7 @@ WorkingDirectory=/opt/trading-bot
 EnvironmentFile=/opt/trading-bot/.env
 
 # Use the virtualenv Python so all packages are available
-ExecStart=/opt/trading-bot/venv/bin/python main.py
+ExecStart=/opt/trading-bot/venv/bin/python cest_main.py
 
 # ── Restart policy ──────────────────────────────────────────────────────────
 # Restart on non-zero exit (crash) but NOT on clean exit (systemctl stop).
