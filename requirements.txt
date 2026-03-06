@@ -2,6 +2,7 @@ alpaca-py==0.43.2
 python-dotenv==1.2.2
 pandas==3.0.1
 numpy==2.4.2
+pytz>=2023.3
 schedule==1.2.2
 pytest==9.0.2
 # ib_insync>=0.9.86  # Uncomment when switching to IB
