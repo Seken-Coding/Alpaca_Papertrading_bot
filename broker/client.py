@@ -350,7 +350,7 @@ class AlpacaClient:
             return bool(clock.is_open)
         except Exception as exc:
             logger.error(
-                "Failed to check market status: %s — assuming market closed",
+                "Failed to check market status after retries: %s — assuming market closed",
                 clean_broker_error(exc),
             )
             return False
