@@ -87,6 +87,27 @@ DD_HALT_DAYS = 20               # Trading days to pause
 EQUITY_SMA_PERIOD = 50           # trades
 EQUITY_HALT_SMA_PERIOD = 100     # trades
 
+# --- Darvas Box (Nicolas Darvas) ---
+DARVAS_LOOKBACK = 60            # bars to scan for boxes
+DARVAS_CONFIRMATION_BARS = 3    # bars to confirm ceiling/floor
+
+# --- Pyramiding (Jesse Livermore) ---
+PYRAMIDING_ENABLED = True
+MAX_PYRAMID_ADDS = 2
+PYRAMID_SIZE_FRACTIONS = [0.50, 0.30]  # size per level as fraction of original
+PYRAMID_R_THRESHOLD = 1.0              # must be +1R per level before adding
+
+# --- SPY Macro Regime (Paul Tudor Jones) ---
+SPY_MACRO_ENABLED = True
+SPY_SMA_LONG = 200
+SPY_SMA_SHORT = 50
+
+# --- Gap Protection ---
+GAP_PROTECTION_ENABLED = True
+GAP_ATR_MULTIPLIER = 5.0        # gap > 5×ATR past stop = blown stop
+MAX_LOSS_R_MULTIPLE = 3.0       # cap single-position loss at 3R
+PORTFOLIO_GAP_LOSS_PCT = 5.0    # emergency if portfolio down 5% at open
+
 # --- Scheduling ---
 DAILY_RUN_TIME = "15:55"         # ET, 5 min before close
 WEEKLY_SCAN_DAY = "Monday"

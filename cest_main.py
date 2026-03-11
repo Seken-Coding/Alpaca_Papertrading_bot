@@ -34,6 +34,9 @@ from risk.cest_risk_manager import (
     passes_equity_curve_filter,
     passes_portfolio_filter,
 )
+from risk.gap_protection import check_position_gap_risk, check_portfolio_gap_risk
+from strategies.spy_macro import detect_spy_macro
+from strategies.pyramiding import check_pyramid_opportunity
 from utils.trade_tracker import TradeRecord, TradeTracker
 from utils.state import BotState, load_state, save_state, should_scan_universe
 
@@ -266,6 +269,46 @@ def process_exits(broker, tracker: TradeTracker, market_data: dict) -> None:
                 )
 
 
+def _process_pyramids(broker, tracker: TradeTracker, market_data: dict, equity: float) -> None:
+    """Check pyramid (add-to-winners) opportunities for open positions."""
+    open_trades = tracker.get_all_open_trades()
+
+    for symbol, trade in open_trades.items():
+        if symbol not in market_data:
+            continue
+
+        data = market_data[symbol]
+        close = data["close"]
+        high = data["high"]
+        low = data["low"]
+
+        regime = detect_regime(close, high, low)
+        pyramid = check_pyramid_opportunity(trade, data, regime, equity)
+
+        if pyramid is None:
+            continue
+
+        # Execute pyramid entry
+        side = "buy" if pyramid.direction == "LONG" else "sell"
+        try:
+            broker.submit_order(
+                symbol=symbol,
+                qty=pyramid.add_size,
+                side=side,
+                order_type="market",
+            )
+            trade.position_size += pyramid.add_size
+            trade.stop_loss = pyramid.new_stop
+            trade.pyramids_added = pyramid.pyramid_level
+            logger.info(
+                "PYRAMID %s %s L%d | +%d shares | New stop=%.2f | %s",
+                pyramid.direction, symbol, pyramid.pyramid_level,
+                pyramid.add_size, pyramid.new_stop, pyramid.reason,
+            )
+        except Exception as e:
+            logger.error("Failed pyramid entry for %s: %s", symbol, e)
+
+
 def run_daily_cycle():
     """Execute one daily cycle of the CEST strategy."""
     logger.info("=" * 60)
@@ -323,15 +366,49 @@ def run_daily_cycle():
         save_state(state)
         return
 
-    # 7. Manage existing positions FIRST
+    # 7. SPY macro regime check (Paul Tudor Jones)
+    macro_mult = 1.0
+    macro_long_allowed = True
+    macro_short_allowed = True
+    if cfg.SPY_MACRO_ENABLED and "SPY" in market_data:
+        macro = detect_spy_macro(market_data["SPY"]["close"])
+        macro_mult = macro.size_multiplier
+        macro_long_allowed = macro.long_allowed
+        macro_short_allowed = macro.short_allowed
+        logger.info(
+            "SPY Macro regime: %s | Longs=%s Shorts=%s | Size mult=%.2f",
+            macro.regime,
+            "YES" if macro_long_allowed else "NO",
+            "YES" if macro_short_allowed else "NO",
+            macro_mult,
+        )
+
+    # 8. Portfolio gap risk check at open
+    if cfg.GAP_PROTECTION_ENABLED:
+        positions_for_gap = broker.get_positions()
+        gap_emergency, gap_loss = check_portfolio_gap_risk(
+            account["equity"], positions_for_gap,
+        )
+        if gap_emergency:
+            logger.critical(
+                "Portfolio gap loss %.1f%% — reducing all new entries by 50%%",
+                gap_loss,
+            )
+            macro_mult *= 0.5
+
+    # 9. Manage existing positions FIRST
     process_exits(broker, tracker, market_data)
 
-    # 8. Check equity curve filter
+    # 9b. Check pyramid opportunities for open positions (Jesse Livermore)
+    if cfg.PYRAMIDING_ENABLED:
+        _process_pyramids(broker, tracker, market_data, account["equity"])
+
+    # 10. Check equity curve filter
     eq_filter = passes_equity_curve_filter(tracker.get_trade_results())
     if not eq_filter:
         logger.warning("Equity curve filter active — reducing position sizes by 50%%")
 
-    # 9. Scan for new entries
+    # 11. Scan for new entries
     positions = broker.get_positions()
     open_position_symbols = [p["symbol"] for p in positions]
     price_data = {sym: df["close"] for sym, df in market_data.items()}
@@ -359,6 +436,16 @@ def run_daily_cycle():
         if signal is None or signal.direction == "NONE":
             continue
 
+        # SPY macro filter: block longs in bear markets, shorts in bull markets
+        if signal.direction == "LONG" and not macro_long_allowed:
+            logger.debug("SPY macro blocked LONG %s — bear market", symbol)
+            entries_blocked += 1
+            continue
+        if signal.direction == "SHORT" and not macro_short_allowed:
+            logger.debug("SPY macro blocked SHORT %s — bull market", symbol)
+            entries_blocked += 1
+            continue
+
         # Check portfolio constraints
         passes, reason = passes_portfolio_filter(
             symbol, signal.direction, open_pos_list, price_data,
@@ -369,7 +456,7 @@ def run_daily_cycle():
             continue
 
         # Calculate position size
-        size_mult = dd_mult * (0.5 if not eq_filter else 1.0)
+        size_mult = dd_mult * macro_mult * (0.5 if not eq_filter else 1.0)
         size = calculate_position_size(
             equity=account["equity"],
             entry_price=signal.entry_price,
