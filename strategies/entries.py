@@ -27,6 +27,7 @@ from analysis.cest_indicators import (
 )
 from config import cest_settings as cfg
 from strategies.patterns import detect_vcp
+from strategies.darvas_box import detect_darvas_breakout
 from strategies.regime import (
     CRISIS,
     HIGH_VOL,
@@ -51,6 +52,7 @@ class EntrySignal:
     stop_distance: float    # abs(entry - stop) per share
     confluence_score: int   # number of conditions met
     has_vcp: bool
+    has_darvas: bool
     atr_percentile: float
     regime: str
     reason: str
@@ -160,8 +162,16 @@ def _trend_entry(
             conditions_met += 1
             reasons.append("VCP")
 
-        # Need at least 5 of conditions 1-5 (condition 6 is bonus)
-        base_score = min(conditions_met, 5) if not has_vcp else conditions_met
+        # Condition 7: Darvas Box breakout (optional bonus)
+        has_darvas = detect_darvas_breakout(
+            high, low, close, volume,
+            lookback=cfg.DARVAS_LOOKBACK,
+        )
+        if has_darvas:
+            conditions_met += 1
+            reasons.append("Darvas breakout")
+
+        # Need at least 5 of conditions 1-5 (conditions 6-7 are bonus)
         if conditions_met < cfg.MIN_CONFLUENCE_SCORE:
             return None
 
@@ -197,6 +207,7 @@ def _trend_entry(
             reasons.append(f"ATR pctile={atr_pctile:.0f}")
 
         has_vcp = False  # No VCP for shorts
+        has_darvas = False  # No Darvas for shorts
 
         if conditions_met < cfg.MIN_CONFLUENCE_SCORE:
             return None
@@ -220,6 +231,7 @@ def _trend_entry(
         stop_distance=stop_distance,
         confluence_score=conditions_met,
         has_vcp=has_vcp,
+        has_darvas=has_darvas,
         atr_percentile=atr_pctile,
         regime=regime,
         reason="; ".join(reasons),
@@ -331,6 +343,7 @@ def _mean_reversion_entry(
         stop_distance=stop_distance,
         confluence_score=conditions_met,
         has_vcp=False,
+        has_darvas=False,
         atr_percentile=atr_pctile,
         regime=regime,
         reason="; ".join(reasons),
