@@ -52,16 +52,18 @@ def _signal_handler(signum, frame):
     logger.info("Shutdown signal received (%s)", signal.Signals(signum).name)
 
 
-def setup_logging():
+def setup_logging(log_dir=None, log_path=None):
     """Configure CEST-specific logging."""
     from pathlib import Path
 
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    log_dir = Path(log_dir) if log_dir else Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_path or (log_dir / "cest_bot.log")
 
     # File handler for CEST bot
     fh = logging.handlers.RotatingFileHandler(
-        cfg.LOG_PATH, maxBytes=10 * 1024 * 1024, backupCount=10,
+        log_file, maxBytes=10 * 1024 * 1024, backupCount=10,
     )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter(
@@ -84,16 +86,17 @@ def setup_logging():
     root.addHandler(ch)
 
 
-def get_broker():
+def get_broker(cest_cfg=None, api_key=None, secret_key=None, paper=None):
     """Create and return the configured broker instance."""
-    if cfg.BROKER == "alpaca":
+    broker_type = cest_cfg.BROKER if cest_cfg else cfg.BROKER
+    if broker_type == "alpaca":
         from broker.alpaca_broker import AlpacaBroker
-        return AlpacaBroker()
-    elif cfg.BROKER == "ib":
+        return AlpacaBroker(api_key=api_key, secret_key=secret_key, paper=paper)
+    elif broker_type == "ib":
         from broker.ib_broker import IBBroker
         return IBBroker()
     else:
-        raise ValueError(f"Unknown broker: {cfg.BROKER}")
+        raise ValueError(f"Unknown broker: {broker_type}")
 
 
 def fetch_all_bars(broker, universe: list[str], timeframe: str = "1Day", limit: int = 252) -> dict:
@@ -309,16 +312,31 @@ def _process_pyramids(broker, tracker: TradeTracker, market_data: dict, equity: 
             logger.error("Failed pyramid entry for %s: %s", symbol, e)
 
 
-def run_daily_cycle():
-    """Execute one daily cycle of the CEST strategy."""
+def _save_state(state, state_path=None):
+    """Save state to the given path, or use the default."""
+    if state_path:
+        save_state(state, path=state_path)
+    else:
+        save_state(state)
+
+
+def run_daily_cycle(broker=None, tracker=None, cest_cfg=None, state_path=None):
+    """Execute one daily cycle of the CEST strategy.
+
+    Parameters are optional for backward compatibility. When called from
+    the multi-account runner, all dependencies are injected explicitly.
+    """
+    # Use injected config or fall back to module-level constants
+    c = cest_cfg or cfg
+
     logger.info("=" * 60)
     logger.info("CEST Daily Cycle starting at %s", datetime.now().isoformat())
     logger.info("=" * 60)
 
     # 1. Load state
-    state = load_state()
-    broker = get_broker()
-    tracker = TradeTracker()
+    state = load_state(path=state_path) if state_path else load_state()
+    broker = broker or get_broker()
+    tracker = tracker or TradeTracker()
 
     # 2. Check if trading is halted
     if state.is_halted():
@@ -334,11 +352,11 @@ def run_daily_cycle():
         except Exception as e:
             logger.error("Universe scan failed: %s", e)
             if not state.universe:
-                state.universe = list(cfg.CORE_ETFS)
+                state.universe = list(c.CORE_ETFS)
 
     # Ensure we have a universe
     if not state.universe:
-        state.universe = list(cfg.CORE_ETFS)
+        state.universe = list(c.CORE_ETFS)
         logger.info("Using core ETFs as default universe")
 
     # 4. Fetch daily bars for entire universe
@@ -355,7 +373,7 @@ def run_daily_cycle():
         )
     except Exception as e:
         logger.error("Failed to get account info: %s", e)
-        save_state(state)
+        _save_state(state, state_path)
         return
 
     # 6. Get drawdown multiplier
@@ -363,14 +381,14 @@ def run_daily_cycle():
     if dd_mult == 0:
         close_all_positions(broker, tracker)
         state.halt_trading()
-        save_state(state)
+        _save_state(state, state_path)
         return
 
     # 7. SPY macro regime check (Paul Tudor Jones)
     macro_mult = 1.0
     macro_long_allowed = True
     macro_short_allowed = True
-    if cfg.SPY_MACRO_ENABLED and "SPY" in market_data:
+    if c.SPY_MACRO_ENABLED and "SPY" in market_data:
         macro = detect_spy_macro(market_data["SPY"]["close"])
         macro_mult = macro.size_multiplier
         macro_long_allowed = macro.long_allowed
@@ -384,7 +402,7 @@ def run_daily_cycle():
         )
 
     # 8. Portfolio gap risk check at open
-    if cfg.GAP_PROTECTION_ENABLED:
+    if c.GAP_PROTECTION_ENABLED:
         positions_for_gap = broker.get_positions()
         gap_emergency, gap_loss = check_portfolio_gap_risk(
             account["equity"], positions_for_gap,
@@ -400,7 +418,7 @@ def run_daily_cycle():
     process_exits(broker, tracker, market_data)
 
     # 9b. Check pyramid opportunities for open positions (Jesse Livermore)
-    if cfg.PYRAMIDING_ENABLED:
+    if c.PYRAMIDING_ENABLED:
         _process_pyramids(broker, tracker, market_data, account["equity"])
 
     # 10. Check equity curve filter
@@ -426,7 +444,7 @@ def run_daily_cycle():
             for p in positions
         ]
         data = market_data.get(symbol)
-        if data is None or len(data) < cfg.VOL_LOOKBACK:
+        if data is None or len(data) < c.VOL_LOOKBACK:
             continue
 
         regime = detect_regime(data["close"], data["high"], data["low"])
@@ -477,7 +495,7 @@ def run_daily_cycle():
 
     # 10. Save state
     state.total_trades = tracker.total_trades
-    save_state(state)
+    _save_state(state, state_path)
 
     logger.info(
         "Daily cycle complete. Open positions: %d | New entries: %d | Blocked: %d",

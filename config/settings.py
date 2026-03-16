@@ -53,6 +53,33 @@ class Settings:
             raise EnvironmentError(f"Missing required environment variable: {name}")
         return value
 
+    @classmethod
+    def with_overrides(cls, api_key: str, secret_key: str, paper: bool = True, **overrides) -> "Settings":
+        """Create a Settings instance with explicit credentials and optional overrides.
+
+        Bypasses environment variable loading for credentials, allowing
+        multi-account usage where each account has its own keys.
+        """
+        instance = object.__new__(cls)
+        instance.api_key = api_key
+        instance.secret_key = secret_key
+        instance.paper = paper
+        instance.auto_execute = True
+        instance.scan_interval_min = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
+        instance.max_orders_per_scan = int(os.getenv("MAX_ORDERS_PER_SCAN", "5"))
+        instance.position_monitor = True
+        instance.trailing_stop_pct = 1.0
+        instance.max_hold_days = 5
+        instance.regime_filter = False
+        instance.scan_start_et = "10:00"
+        instance.scan_end_et = "15:30"
+        instance.universe_mode = "static"
+        instance.universe_cache_ttl = 86400
+        for key, value in overrides.items():
+            if hasattr(instance, key):
+                setattr(instance, key, value)
+        return instance
+
     def __repr__(self) -> str:
         return (
             f"Settings(paper={self.paper}, auto_execute={self.auto_execute}, "

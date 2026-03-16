@@ -31,10 +31,11 @@ except ImportError:
 class AlpacaBroker(BrokerBase):
     """Alpaca Markets broker implementation."""
 
-    def __init__(self):
-        api_key = os.getenv("ALPACA_API_KEY")
-        secret_key = os.getenv("ALPACA_SECRET_KEY")
-        paper = os.getenv("ALPACA_PAPER", "true").lower() == "true"
+    def __init__(self, api_key=None, secret_key=None, paper=None):
+        api_key = api_key or os.getenv("ALPACA_API_KEY")
+        secret_key = secret_key or os.getenv("ALPACA_SECRET_KEY")
+        if paper is None:
+            paper = os.getenv("ALPACA_PAPER", "true").lower() == "true"
 
         if not api_key or not secret_key:
             raise EnvironmentError(
