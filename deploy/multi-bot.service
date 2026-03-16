@@ -1,0 +1,60 @@
+# Alpaca Paper Trading Bot — Multi-Account systemd service unit
+#
+# Runs multi_main.py which orchestrates N trading accounts, each in its own
+# process. Accounts are configured in config/accounts.yaml, API keys in .env.
+#
+# Installation (run as root on the VPS):
+#   cp multi-bot.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable multi-bot
+#   systemctl start  multi-bot
+#
+# Useful commands:
+#   systemctl status  multi-bot
+#   systemctl stop    multi-bot
+#   journalctl -u multi-bot -f
+
+[Unit]
+Description=Multi-Account Trading Bot (Alpaca)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trading
+Group=trading
+WorkingDirectory=/opt/trading-bot
+
+# Load .env — contains ACCT1/2/3 API keys and automation settings
+EnvironmentFile=/opt/trading-bot/.env
+
+ExecStart=/opt/trading-bot/venv/bin/python multi_main.py
+
+# ── Process management ────────────────────────────────────────────────────
+# multi_main.py spawns child processes (one per account). KillMode=control-group
+# ensures systemctl stop terminates the parent AND all child processes.
+KillMode=control-group
+KillSignal=SIGTERM
+
+# Give child processes time to shut down gracefully
+TimeoutStopSec=30
+
+# ── Restart policy ────────────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=30s
+
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# ── Logging ───────────────────────────────────────────────────────────────
+StandardOutput=append:/opt/trading-bot/logs/multi-bot.log
+StandardError=append:/opt/trading-bot/logs/errors.log
+
+# ── Hardening (optional but recommended) ──────────────────────────────────
+# PrivateTmp=yes
+# NoNewPrivileges=yes
+# ProtectSystem=strict
+# ReadWritePaths=/opt/trading-bot/logs /opt/trading-bot/data
+
+[Install]
+WantedBy=multi-user.target
