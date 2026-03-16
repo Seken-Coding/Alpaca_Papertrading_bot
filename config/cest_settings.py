@@ -4,6 +4,9 @@ Composite Edge Systematic Trader configuration.
 No magic numbers should appear in strategy code; everything references this module.
 """
 
+from dataclasses import dataclass, field
+from typing import Any
+
 # --- Broker ---
 BROKER = "alpaca"  # "alpaca" or "ib"
 PAPER_TRADING = True
@@ -128,3 +131,132 @@ SECTOR_MAP = {
 
 # Default sector for symbols not in SECTOR_MAP
 DEFAULT_SECTOR = "UNKNOWN"
+
+
+@dataclass
+class CestConfig:
+    """Runtime CEST config — mirrors module-level constants but can be overridden.
+
+    Use ``CestConfig.from_overrides({"RISK_PER_TRADE": 0.005})`` to create
+    a variant with selected parameters changed.  The defaults match the
+    module-level constants above.
+    """
+
+    BROKER: str = BROKER
+    PAPER_TRADING: bool = PAPER_TRADING
+
+    # Universe
+    CORE_ETFS: list = field(default_factory=lambda: list(CORE_ETFS))
+    DYNAMIC_UNIVERSE_SIZE: int = DYNAMIC_UNIVERSE_SIZE
+    MIN_MARKET_CAP: int = MIN_MARKET_CAP
+    MIN_DOLLAR_VOLUME: int = MIN_DOLLAR_VOLUME
+    MIN_PRICE: float = MIN_PRICE
+    ATR_PCT_MIN: float = ATR_PCT_MIN
+    ATR_PCT_MAX: float = ATR_PCT_MAX
+
+    # Indicators
+    EMA_FAST: int = EMA_FAST
+    EMA_SLOW: int = EMA_SLOW
+    EMA_REGIME: int = EMA_REGIME
+    RSI_PERIOD: int = RSI_PERIOD
+    RSI_SHORT_PERIOD: int = RSI_SHORT_PERIOD
+    ADX_PERIOD: int = ADX_PERIOD
+    ATR_PERIOD: int = ATR_PERIOD
+    DONCHIAN_PERIOD: int = DONCHIAN_PERIOD
+    BB_PERIOD: int = BB_PERIOD
+    BB_STD: float = BB_STD
+    VOLUME_SMA_PERIOD: int = VOLUME_SMA_PERIOD
+    VOL_LOOKBACK: int = VOL_LOOKBACK
+    CORRELATION_LOOKBACK: int = CORRELATION_LOOKBACK
+
+    # Regime
+    EMA_SLOPE_THRESHOLD: float = EMA_SLOPE_THRESHOLD
+    ADX_TREND_THRESHOLD: int = ADX_TREND_THRESHOLD
+    ADX_RANGE_THRESHOLD: int = ADX_RANGE_THRESHOLD
+    VOL_PERCENTILE_HIGH: int = VOL_PERCENTILE_HIGH
+    VOL_PERCENTILE_CRISIS: int = VOL_PERCENTILE_CRISIS
+
+    # Entry
+    VOLUME_BREAKOUT_MULTIPLIER: float = VOLUME_BREAKOUT_MULTIPLIER
+    RSI_MR_OVERSOLD: int = RSI_MR_OVERSOLD
+    RSI_MR_OVERBOUGHT: int = RSI_MR_OVERBOUGHT
+    RSI_TREND_LOW: int = RSI_TREND_LOW
+    RSI_TREND_HIGH: int = RSI_TREND_HIGH
+    MR_DISTANCE_FROM_MEAN_PCT: float = MR_DISTANCE_FROM_MEAN_PCT
+    BB_WIDTH_PERCENTILE: int = BB_WIDTH_PERCENTILE
+    MIN_CONFLUENCE_SCORE: int = MIN_CONFLUENCE_SCORE
+
+    # Exit
+    TREND_STOP_ATR_MULT: float = TREND_STOP_ATR_MULT
+    MR_STOP_ATR_MULT: float = MR_STOP_ATR_MULT
+    TRAILING_STOP_ATR_MULT: float = TRAILING_STOP_ATR_MULT
+    TREND_PARTIAL_PROFIT_R: float = TREND_PARTIAL_PROFIT_R
+    TREND_PARTIAL_SIZE: float = TREND_PARTIAL_SIZE
+    MR_TARGET_R: float = MR_TARGET_R
+    TREND_TIME_STOP_BARS: int = TREND_TIME_STOP_BARS
+    MR_TIME_STOP_BARS: int = MR_TIME_STOP_BARS
+    BREAKEVEN_TRIGGER_R: float = BREAKEVEN_TRIGGER_R
+    MR_RSI_EXIT_LONG: int = MR_RSI_EXIT_LONG
+    MR_RSI_EXIT_SHORT: int = MR_RSI_EXIT_SHORT
+
+    # Position Sizing
+    RISK_PER_TRADE: float = RISK_PER_TRADE
+    MAX_RISK_PER_TRADE: float = MAX_RISK_PER_TRADE
+
+    # Portfolio Risk
+    MAX_POSITIONS: int = MAX_POSITIONS
+    MAX_SAME_DIRECTION: int = MAX_SAME_DIRECTION
+    MAX_SECTOR_POSITIONS: int = MAX_SECTOR_POSITIONS
+    CORRELATION_THRESHOLD: float = CORRELATION_THRESHOLD
+    PORTFOLIO_CORR_LIMIT: float = PORTFOLIO_CORR_LIMIT
+
+    # Drawdown
+    DD_WARNING: int = DD_WARNING
+    DD_REDUCE_50: int = DD_REDUCE_50
+    DD_REDUCE_75: int = DD_REDUCE_75
+    DD_HALT: int = DD_HALT
+    DD_HALT_DAYS: int = DD_HALT_DAYS
+
+    # Equity Curve
+    EQUITY_SMA_PERIOD: int = EQUITY_SMA_PERIOD
+    EQUITY_HALT_SMA_PERIOD: int = EQUITY_HALT_SMA_PERIOD
+
+    # Darvas Box
+    DARVAS_LOOKBACK: int = DARVAS_LOOKBACK
+    DARVAS_CONFIRMATION_BARS: int = DARVAS_CONFIRMATION_BARS
+
+    # Pyramiding
+    PYRAMIDING_ENABLED: bool = PYRAMIDING_ENABLED
+    MAX_PYRAMID_ADDS: int = MAX_PYRAMID_ADDS
+    PYRAMID_SIZE_FRACTIONS: list = field(default_factory=lambda: list(PYRAMID_SIZE_FRACTIONS))
+    PYRAMID_R_THRESHOLD: float = PYRAMID_R_THRESHOLD
+
+    # SPY Macro
+    SPY_MACRO_ENABLED: bool = SPY_MACRO_ENABLED
+    SPY_SMA_LONG: int = SPY_SMA_LONG
+    SPY_SMA_SHORT: int = SPY_SMA_SHORT
+
+    # Gap Protection
+    GAP_PROTECTION_ENABLED: bool = GAP_PROTECTION_ENABLED
+    GAP_ATR_MULTIPLIER: float = GAP_ATR_MULTIPLIER
+    MAX_LOSS_R_MULTIPLE: float = MAX_LOSS_R_MULTIPLE
+    PORTFOLIO_GAP_LOSS_PCT: float = PORTFOLIO_GAP_LOSS_PCT
+
+    # Scheduling
+    DAILY_RUN_TIME: str = DAILY_RUN_TIME
+    WEEKLY_SCAN_DAY: str = WEEKLY_SCAN_DAY
+
+    # Data paths
+    TRADE_LOG_PATH: str = TRADE_LOG_PATH
+    STATE_PATH: str = STATE_PATH
+    LOG_PATH: str = LOG_PATH
+
+    # Sector Map
+    SECTOR_MAP: dict = field(default_factory=lambda: dict(SECTOR_MAP))
+    DEFAULT_SECTOR: str = DEFAULT_SECTOR
+
+    @classmethod
+    def from_overrides(cls, overrides: dict[str, Any]) -> "CestConfig":
+        """Create a CestConfig with selected parameters changed."""
+        valid = {k: v for k, v in overrides.items() if hasattr(cls, k)}
+        return cls(**valid)

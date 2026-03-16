@@ -65,12 +65,13 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 # Core scan-and-execute logic (shared by both modes)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _connect() -> tuple[AlpacaClient, RiskManager]:
+def _connect(cfg=None) -> tuple[AlpacaClient, RiskManager]:
     """Connect to Alpaca and initialise the risk manager."""
+    s = cfg or settings
     client = AlpacaClient(
-        api_key=settings.api_key,
-        secret_key=settings.secret_key,
-        paper=settings.paper,
+        api_key=s.api_key,
+        secret_key=s.secret_key,
+        paper=s.paper,
     )
     try:
         account = client.get_account()
@@ -95,11 +96,13 @@ def _scan_and_execute(
     risk: RiskManager,
     store: PositionStore | None = None,
     journal: TradeJournal | None = None,
+    cfg=None,
 ) -> str:
     """Run one full scan cycle and (if AUTO_EXECUTE) place orders.
 
     Returns a short summary string for the scheduler to report in status logs.
     """
+    s = cfg or settings
     scan_start = time.monotonic()
 
     # Refresh account state for risk tracking
@@ -117,7 +120,7 @@ def _scan_and_execute(
         return f"account fetch failed: {exc}"
 
     # ── Market regime gate ──────────────────────────────────────────
-    if settings.regime_filter:
+    if s.regime_filter:
         regime = MarketRegimeFilter(client).classify()
         if regime == "BEAR":
             logger.warning(
@@ -134,8 +137,8 @@ def _scan_and_execute(
     scanner = StrategyScanner(
         client=client,
         strategies=[MomentumStrategy(), MeanReversionStrategy()],
-        universe_mode=settings.universe_mode,
-        universe_cache_ttl=settings.universe_cache_ttl,
+        universe_mode=s.universe_mode,
+        universe_cache_ttl=s.universe_cache_ttl,
     )
     recommendations = scanner.scan()
 
@@ -155,12 +158,12 @@ def _scan_and_execute(
     logger.info("=" * 72)
 
     # Auto-execute
-    if settings.auto_execute:
+    if s.auto_execute:
         logger.info("AUTO_EXECUTE=true — passing to ExecutionEngine")
         engine = ExecutionEngine(
             client=client,
             risk_manager=risk,
-            max_orders=settings.max_orders_per_scan,
+            max_orders=s.max_orders_per_scan,
             require_market_open=True,
             position_store=store,
             trade_journal=journal,
@@ -215,10 +218,11 @@ def _parse_time(t: str):
         return None
 
 
-def _in_scan_window(now_et: datetime) -> bool:
+def _in_scan_window(now_et: datetime, cfg=None) -> bool:
     """Return True if current ET time is within the configured scan window."""
-    start = _parse_time(settings.scan_start_et)
-    end = _parse_time(settings.scan_end_et)
+    s = cfg or settings
+    start = _parse_time(s.scan_start_et)
+    end = _parse_time(s.scan_end_et)
     if start is None or end is None:
         logger.warning("Scan window misconfigured — treating as always open")
         return True
@@ -226,7 +230,8 @@ def _in_scan_window(now_et: datetime) -> bool:
     return start <= now_t <= end
 
 
-def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
+def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
+                    store: PositionStore = None, journal: TradeJournal = None) -> None:
     """Block forever, scanning every SCAN_INTERVAL_MIN minutes while the market is open.
 
     The loop checks every 60 seconds.  When the market is open and enough
@@ -234,16 +239,17 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
     market is closed (evenings, weekends, holidays) the bot idles and logs
     a status message every 10 minutes.
     """
-    scan_interval = timedelta(minutes=settings.scan_interval_min)
+    s = cfg or settings
+    scan_interval = timedelta(minutes=s.scan_interval_min)
 
     # Shared across ticks — created once
-    _store = PositionStore()
-    _journal = TradeJournal()
+    _store = store or PositionStore()
+    _journal = journal or TradeJournal()
     _monitor = PositionMonitor(client=client, store=_store, journal=_journal)
 
     logger.info(
         "Scheduler started — scanning every %dm while market is open (AUTO_EXECUTE=%s)",
-        settings.scan_interval_min, settings.auto_execute,
+        s.scan_interval_min, s.auto_execute,
     )
 
     last_scan_at: datetime | None = None     # When the last scan started
@@ -318,11 +324,11 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
                         )
 
                     # Scan window gate
-                    in_window = _in_scan_window(now)
+                    in_window = _in_scan_window(now, cfg=s)
                     if not in_window:
                         logger.debug(
                             "Outside scan window %s–%s ET — skipping scan",
-                            settings.scan_start_et, settings.scan_end_et,
+                            s.scan_start_et, s.scan_end_et,
                         )
                     else:
                         time_to_scan = (
@@ -339,6 +345,7 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager) -> None:
                             try:
                                 result = _scan_and_execute(
                                     client, risk, store=_store, journal=_journal,
+                                    cfg=s,
                                 )
                                 last_scan_result = result or "no actionable recommendations"
                             except Exception as exc:
