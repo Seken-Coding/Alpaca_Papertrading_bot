@@ -75,9 +75,16 @@ class Settings:
         instance.scan_end_et = "15:30"
         instance.universe_mode = "static"
         instance.universe_cache_ttl = 86400
+        import logging
+        _logger = logging.getLogger(__name__)
         for key, value in overrides.items():
             if hasattr(instance, key):
                 setattr(instance, key, value)
+            else:
+                _logger.warning(
+                    "Settings.with_overrides: unknown key '%s' ignored "
+                    "(not a valid Settings attribute)", key,
+                )
         return instance
 
     def __repr__(self) -> str:
