@@ -153,6 +153,7 @@ def _run_intraday(ctx: AccountContext, account_logger: logging.Logger) -> None:
 
 def _run_cest(ctx: AccountContext, account_logger: logging.Logger) -> None:
     """Run the CEST bot for this account (mirrors cest_main.py logic)."""
+    import dataclasses
     import signal
     import time as _time
 
@@ -160,6 +161,18 @@ def _run_cest(ctx: AccountContext, account_logger: logging.Logger) -> None:
     broker = ctx.create_alpaca_broker()
     tracker = ctx.create_trade_tracker()
     state_path = ctx.get_state_path()
+
+    # Patch the module-level cest_settings constants so that sub-functions
+    # (generate_signal, manage_exits, calculate_position_size, etc.) which
+    # import `from config import cest_settings as cfg` pick up this account's
+    # overrides.  Safe because each account runs in its own process.
+    import config.cest_settings as cest_module
+    for f in dataclasses.fields(cest_cfg):
+        setattr(cest_module, f.name, getattr(cest_cfg, f.name))
+    account_logger.info(
+        "Applied strategy overrides to cest_settings module: %s",
+        ctx.config.strategy_overrides,
+    )
 
     # Import the daily cycle runner
     from cest_main import run_daily_cycle
@@ -194,6 +207,17 @@ def _run_cest(ctx: AccountContext, account_logger: logging.Logger) -> None:
             perf.record_snapshot(broker)
         except Exception as exc:
             account_logger.warning("Performance snapshot failed: %s", exc)
+
+    # Run an initial cycle immediately so the bot doesn't sit idle
+    # until the next scheduled time (which could be tomorrow).
+    account_logger.info(
+        "Running initial CEST cycle for '%s' before entering scheduler loop...",
+        ctx.config.id,
+    )
+    try:
+        _cycle()
+    except Exception as exc:
+        account_logger.error("Initial CEST cycle failed: %s", exc, exc_info=True)
 
     schedule.every().day.at(cest_cfg.DAILY_RUN_TIME).do(_cycle)
 

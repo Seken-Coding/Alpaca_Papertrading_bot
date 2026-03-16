@@ -259,6 +259,16 @@ class CestConfig:
     def from_overrides(cls, overrides: dict[str, Any]) -> "CestConfig":
         """Create a CestConfig with selected parameters changed."""
         import dataclasses
+        import logging
+        _logger = logging.getLogger(__name__)
         field_names = {f.name for f in dataclasses.fields(cls)}
-        valid = {k: v for k, v in overrides.items() if k in field_names}
+        valid = {}
+        for k, v in overrides.items():
+            if k in field_names:
+                valid[k] = v
+            else:
+                _logger.warning(
+                    "CestConfig.from_overrides: unknown key '%s' ignored "
+                    "(not a valid CestConfig field)", k,
+                )
         return cls(**valid)
