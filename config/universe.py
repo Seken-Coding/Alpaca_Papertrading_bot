@@ -44,10 +44,57 @@ SP500_SYMBOLS = [
 ]
 
 
+_BATCH_SIZE = 50  # symbols per batch API call
+
+
+def _evaluate_symbol(symbol, bars):
+    """Evaluate a single symbol's bars against universe filters.
+
+    Returns a candidate dict or None if the symbol doesn't pass filters.
+    """
+    if bars.empty or len(bars) < 126:
+        return None
+
+    close = bars["close"]
+    high = bars["high"]
+    low = bars["low"]
+    volume = bars["volume"]
+    price = close.iloc[-1]
+
+    if price < cfg.MIN_PRICE:
+        return None
+
+    avg_dollar_vol = (close.tail(20) * volume.tail(20)).mean()
+    if avg_dollar_vol < cfg.MIN_DOLLAR_VOLUME:
+        return None
+
+    atr_series = ATR(high, low, close, period=cfg.ATR_PERIOD)
+    atr_val = atr_series.iloc[-1]
+    if pd.isna(atr_val) or price <= 0:
+        return None
+    atr_pct = atr_val / price * 100.0
+    if atr_pct < cfg.ATR_PCT_MIN or atr_pct > cfg.ATR_PCT_MAX:
+        return None
+
+    price_6m_ago = close.iloc[-126]
+    if price_6m_ago <= 0:
+        return None
+    rel_strength = (price - price_6m_ago) / price_6m_ago * 100.0
+
+    return {
+        "symbol": symbol,
+        "rel_strength": rel_strength,
+        "price": price,
+        "avg_dollar_vol": avg_dollar_vol,
+        "atr_pct": atr_pct,
+    }
+
+
 def scan_universe(broker) -> list[str]:
     """Scan and build the full trading universe.
 
     Returns the combined list of Core ETFs + top dynamic stocks.
+    Fetches bar data in batches to minimize API calls and avoid rate limits.
 
     Parameters
     ----------
@@ -58,61 +105,36 @@ def scan_universe(broker) -> list[str]:
     list[str] : symbol list
     """
     universe = list(cfg.CORE_ETFS)
+    core_set = set(universe)
 
-    logger.info("Scanning dynamic universe from %d S&P 500 candidates...", len(SP500_SYMBOLS))
+    # Filter out symbols already in the core ETFs
+    scan_symbols = [s for s in SP500_SYMBOLS if s not in core_set]
 
-    # Fetch 6-month (126 trading day) bars for all candidates
+    logger.info("Scanning dynamic universe from %d S&P 500 candidates...", len(scan_symbols))
+
+    # Fetch bars in batches to avoid rate limiting
     candidates = []
-    for symbol in SP500_SYMBOLS:
-        if symbol in universe:
-            continue  # Skip core ETFs already included
+    for i in range(0, len(scan_symbols), _BATCH_SIZE):
+        batch = scan_symbols[i : i + _BATCH_SIZE]
+        logger.debug("Fetching batch %d-%d of %d symbols", i, i + len(batch), len(scan_symbols))
 
         try:
-            bars = broker.get_bars(symbol, "1Day", 252)
-            if bars.empty or len(bars) < 126:
-                continue
-
-            close = bars["close"]
-            high = bars["high"]
-            low = bars["low"]
-            volume = bars["volume"]
-            price = close.iloc[-1]
-
-            # Filter: Price > $10
-            if price < cfg.MIN_PRICE:
-                continue
-
-            # Filter: Avg daily dollar volume (20-day) > $50M
-            avg_dollar_vol = (close.tail(20) * volume.tail(20)).mean()
-            if avg_dollar_vol < cfg.MIN_DOLLAR_VOLUME:
-                continue
-
-            # Filter: ATR(20) as % of price between 0.5% and 8.0%
-            atr_series = ATR(high, low, close, period=cfg.ATR_PERIOD)
-            atr_val = atr_series.iloc[-1]
-            if pd.isna(atr_val) or price <= 0:
-                continue
-            atr_pct = atr_val / price * 100.0
-            if atr_pct < cfg.ATR_PCT_MIN or atr_pct > cfg.ATR_PCT_MAX:
-                continue
-
-            # Calculate 6-month relative strength (% return over 126 days)
-            price_6m_ago = close.iloc[-126]
-            if price_6m_ago <= 0:
-                continue
-            rel_strength = (price - price_6m_ago) / price_6m_ago * 100.0
-
-            candidates.append({
-                "symbol": symbol,
-                "rel_strength": rel_strength,
-                "price": price,
-                "avg_dollar_vol": avg_dollar_vol,
-                "atr_pct": atr_pct,
-            })
-
+            bars_map = broker.get_bars_batch(batch, "1Day", 252)
         except Exception as e:
-            logger.debug("Skipping %s during universe scan: %s", symbol, e)
+            logger.warning("Batch fetch failed for symbols %d-%d: %s", i, i + len(batch), e)
             continue
+
+        for symbol in batch:
+            bars = bars_map.get(symbol)
+            if bars is None:
+                continue
+            try:
+                candidate = _evaluate_symbol(symbol, bars)
+                if candidate is not None:
+                    candidates.append(candidate)
+            except Exception as e:
+                logger.debug("Skipping %s during universe scan: %s", symbol, e)
+                continue
 
     # Sort by relative strength and take top N
     candidates.sort(key=lambda x: x["rel_strength"], reverse=True)
