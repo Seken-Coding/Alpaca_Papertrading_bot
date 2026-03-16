@@ -18,6 +18,8 @@
 Description=Multi-Account Trading Bot (Alpaca)
 After=network-online.target
 Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple
@@ -42,9 +44,6 @@ TimeoutStopSec=30
 # ── Restart policy ────────────────────────────────────────────────────────
 Restart=on-failure
 RestartSec=30s
-
-StartLimitBurst=5
-StartLimitIntervalSec=300
 
 # ── Logging ───────────────────────────────────────────────────────────────
 StandardOutput=append:/opt/trading-bot/logs/multi-bot.log

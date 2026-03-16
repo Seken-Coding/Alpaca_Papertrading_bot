@@ -17,6 +17,10 @@ Description=CEST Trading Bot (Alpaca)
 # Wait for network connectivity before starting (Alpaca API requires internet)
 After=network-online.target
 Wants=network-online.target
+# Give up restarting after 5 failures within 5 minutes (broken environment).
+# Run: systemctl reset-failed trading-bot  to clear the failure counter.
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple
@@ -36,11 +40,6 @@ ExecStart=/opt/trading-bot/venv/bin/python cest_main.py --schedule
 # SIGTERM → KeyboardInterrupt → clean exit code 0 → no restart.
 Restart=on-failure
 RestartSec=30s
-
-# Give up restarting after 5 failures within 5 minutes (broken environment).
-# Run: systemctl reset-failed trading-bot  to clear the failure counter.
-StartLimitBurst=5
-StartLimitIntervalSec=300
 
 # ── Logging ─────────────────────────────────────────────────────────────────
 # Append stdout/stderr directly to the same log files the Python logger uses.
