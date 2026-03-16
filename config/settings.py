@@ -3,6 +3,14 @@
 import os
 
 
+def _clean_env(name: str, default: str | None = None) -> str | None:
+    """Read an env var and strip inline ``# comments`` that some .env loaders leave."""
+    value = os.getenv(name, default)
+    if value is not None and "#" in value:
+        value = value.split("#", 1)[0].strip()
+    return value
+
+
 class Settings:
     """Loads and validates configuration from environment."""
 
@@ -10,45 +18,45 @@ class Settings:
         # ── Broker credentials (required) ─────────────────────────────
         self.api_key: str = self._require("ALPACA_API_KEY")
         self.secret_key: str = self._require("ALPACA_SECRET_KEY")
-        self.paper: bool = os.getenv("ALPACA_PAPER", "true").lower() == "true"
+        self.paper: bool = _clean_env("ALPACA_PAPER", "true").lower() == "true"
 
         # ── Automation (optional, safe defaults = manual mode) ─────────
-        self.auto_execute: bool = os.getenv("AUTO_EXECUTE", "false").lower() == "true"
+        self.auto_execute: bool = _clean_env("AUTO_EXECUTE", "false").lower() == "true"
 
         # How often to scan while the market is open (in minutes).
         # Default = 5 minutes.  The bot scans repeatedly throughout the
         # trading day, not just once.
-        self.scan_interval_min: int = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
+        self.scan_interval_min: int = int(_clean_env("SCAN_INTERVAL_MIN", "5"))
 
         # Maximum bracket orders the engine may place in a single scan run.
-        self.max_orders_per_scan: int = int(os.getenv("MAX_ORDERS_PER_SCAN", "5"))
+        self.max_orders_per_scan: int = int(_clean_env("MAX_ORDERS_PER_SCAN", "5"))
 
         # ── Position monitor ────────────────────────────────────────
         self.position_monitor: bool = (
-            os.getenv("POSITION_MONITOR", "true").lower() == "true"
+            _clean_env("POSITION_MONITOR", "true").lower() == "true"
         )
         self.trailing_stop_pct: float = float(
-            os.getenv("TRAILING_STOP_PCT", "1.0")
+            _clean_env("TRAILING_STOP_PCT", "1.0")
         )
-        self.max_hold_days: int = int(os.getenv("MAX_HOLD_DAYS", "5"))
+        self.max_hold_days: int = int(_clean_env("MAX_HOLD_DAYS", "5"))
 
         # ── Market regime filter ────────────────────────────────────
         self.regime_filter: bool = (
-            os.getenv("REGIME_FILTER", "false").lower() == "true"
+            _clean_env("REGIME_FILTER", "false").lower() == "true"
         )
 
         # ── Scan time window (HH:MM in US/Eastern) ─────────────────
-        self.scan_start_et: str = os.getenv("SCAN_START_ET", "10:00")
-        self.scan_end_et: str = os.getenv("SCAN_END_ET", "15:30")
+        self.scan_start_et: str = _clean_env("SCAN_START_ET", "10:00")
+        self.scan_end_et: str = _clean_env("SCAN_END_ET", "15:30")
 
         # ── Universe discovery ──────────────────────────────────────
         # "static" = hardcoded SP500_SAMPLE, "dynamic" = Alpaca get_assets()
-        self.universe_mode: str = os.getenv("UNIVERSE", "static").lower()
-        self.universe_cache_ttl: int = int(os.getenv("UNIVERSE_CACHE_TTL", "86400"))
+        self.universe_mode: str = _clean_env("UNIVERSE", "static").lower()
+        self.universe_cache_ttl: int = int(_clean_env("UNIVERSE_CACHE_TTL", "86400"))
 
     @staticmethod
     def _require(name: str) -> str:
-        value = os.getenv(name)
+        value = _clean_env(name)
         if not value:
             raise EnvironmentError(f"Missing required environment variable: {name}")
         return value
@@ -65,8 +73,8 @@ class Settings:
         instance.secret_key = secret_key
         instance.paper = paper
         instance.auto_execute = True
-        instance.scan_interval_min = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
-        instance.max_orders_per_scan = int(os.getenv("MAX_ORDERS_PER_SCAN", "5"))
+        instance.scan_interval_min = int(_clean_env("SCAN_INTERVAL_MIN", "5"))
+        instance.max_orders_per_scan = int(_clean_env("MAX_ORDERS_PER_SCAN", "5"))
         instance.position_monitor = True
         instance.trailing_stop_pct = 1.0
         instance.max_hold_days = 5
