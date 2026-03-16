@@ -10,10 +10,11 @@
 # What this script does:
 #   1. Installs Python 3.13 via the deadsnakes PPA
 #   2. Creates a dedicated 'trading' system user
-#   3. Copies the bot to /opt/trading-bot/
+#   3. Copies the bot to /opt/trading-bot/ (with per-account directories)
 #   4. Creates a Python virtualenv and installs dependencies
 #   5. Prompts you to fill in your .env (API keys, automation settings)
-#   6. Stops old single-bot services (if present) and installs multi-bot service
+#   6. Validates accounts.yaml, verifies env vars, runs pre-flight checks
+#   7. Stops old single-bot services (if present) and installs multi-bot service
 # =============================================================================
 
 set -euo pipefail
@@ -101,6 +102,20 @@ rsync -a --exclude='.git' \
 mkdir -p "$BOT_DIR/logs"
 mkdir -p "$BOT_DIR/data"
 
+# Create per-account data and log directories from accounts.yaml
+ACCOUNTS_YAML="$BOT_DIR/config/accounts.yaml"
+if [[ -f "$ACCOUNTS_YAML" ]]; then
+    # Extract account IDs — lightweight grep, no Python needed yet
+    ACCOUNT_IDS=$(grep -E '^\s+-?\s*id:' "$ACCOUNTS_YAML" | sed 's/.*id:\s*"\?\([^"]*\)"\?.*/\1/')
+    for ACCT_ID in $ACCOUNT_IDS; do
+        mkdir -p "$BOT_DIR/data/$ACCT_ID"
+        mkdir -p "$BOT_DIR/logs/$ACCT_ID"
+        info "Created dirs for account '$ACCT_ID'"
+    done
+else
+    warn "accounts.yaml not found — skipping per-account directory setup"
+fi
+
 # Set ownership
 chown -R "$BOT_USER:$BOT_USER" "$BOT_DIR"
 
@@ -165,7 +180,90 @@ else
 fi
 
 # =============================================================================
-# 6. Stop legacy services (if present) and install multi-bot service
+# 6. Validate accounts.yaml and .env for multi-bot deployment
+# =============================================================================
+info "Validating multi-bot configuration ..."
+
+# 6a. Parse accounts.yaml and extract required env var names
+if [[ ! -f "$ACCOUNTS_YAML" ]]; then
+    err "accounts.yaml not found at $ACCOUNTS_YAML — cannot deploy multi-bot"
+fi
+
+# Validate YAML is parseable using the virtualenv Python
+sudo -u "$BOT_USER" "$VENV/bin/python" -c "
+import yaml, sys
+with open('$ACCOUNTS_YAML') as f:
+    data = yaml.safe_load(f)
+if not data or 'accounts' not in data:
+    print('ERROR: accounts.yaml missing \"accounts\" key', file=sys.stderr)
+    sys.exit(1)
+for acct in data['accounts']:
+    for key in ('id', 'bot_type', 'api_key_env', 'secret_key_env'):
+        if key not in acct:
+            print(f'ERROR: account missing required field \"{key}\"', file=sys.stderr)
+            sys.exit(1)
+    if acct['bot_type'] not in ('intraday', 'cest'):
+        print(f'ERROR: account \"{acct[\"id\"]}\" has invalid bot_type \"{acct[\"bot_type\"]}\"', file=sys.stderr)
+        sys.exit(1)
+print(f'OK — {len(data[\"accounts\"])} accounts configured')
+" || err "accounts.yaml validation failed"
+
+# 6b. Verify required ACCT* env vars exist in .env
+REQUIRED_ENVS=$(grep -oE 'ACCT[0-9]+_(API_KEY|SECRET_KEY)' "$ACCOUNTS_YAML" | sort -u)
+MISSING_ENVS=""
+for VAR in $REQUIRED_ENVS; do
+    if ! grep -qE "^${VAR}=" "$ENV_FILE" 2>/dev/null; then
+        MISSING_ENVS="${MISSING_ENVS}  ${VAR}\n"
+    fi
+done
+
+if [[ -n "$MISSING_ENVS" ]]; then
+    warn "The following env vars are referenced in accounts.yaml but not set in .env:"
+    echo -e "$MISSING_ENVS"
+    warn "The multi-bot service will fail to start until these are set."
+    read -rp "Continue anyway? [y/N] " CONTINUE
+    [[ "$CONTINUE" =~ ^[Yy]$ ]] || err "Aborted — please fill in $ENV_FILE first"
+else
+    info "All required env vars found in .env"
+fi
+
+# 6c. Pre-flight import check — verify all bot modules load without errors
+info "Running pre-flight import check ..."
+sudo -u "$BOT_USER" "$VENV/bin/python" -c "
+import sys
+failures = []
+modules = [
+    'config.settings', 'config.cest_settings', 'config.accounts',
+    'broker.client', 'broker.alpaca_broker', 'broker.errors',
+    'strategies.momentum', 'strategies.mean_reversion', 'strategies.scanner',
+    'strategies.regime', 'strategies.entries', 'strategies.exits',
+    'strategies.pyramiding', 'strategies.spy_macro', 'strategies.darvas_box',
+    'execution.engine', 'execution.position_store', 'execution.trade_journal',
+    'execution.position_monitor', 'execution.market_regime',
+    'analysis.indicators', 'analysis.scorer', 'analysis.signals',
+    'risk.manager', 'risk.cest_risk_manager', 'risk.position_sizing',
+    'risk.gap_protection',
+    'utils.state', 'utils.trade_tracker',
+    'multi.context', 'multi.runner', 'multi.dashboard',
+    'logging_config',
+]
+for mod_name in modules:
+    try:
+        __import__(mod_name)
+    except Exception as e:
+        failures.append(f'{mod_name}: {e}')
+if failures:
+    print('IMPORT FAILURES:', file=sys.stderr)
+    for f in failures:
+        print(f'  {f}', file=sys.stderr)
+    sys.exit(1)
+print(f'OK — {len(modules)} modules imported successfully')
+" || err "Pre-flight check failed — fix import errors before deploying"
+
+info "Multi-bot configuration validated successfully"
+
+# =============================================================================
+# 7. Stop legacy services (if present) and install multi-bot service
 # =============================================================================
 MULTI_SERVICE_FILE="/etc/systemd/system/${MULTI_SERVICE}.service"
 
@@ -210,21 +308,37 @@ echo "Service status:"
 echo "────────────────────────────────────────"
 systemctl status "$MULTI_SERVICE" --no-pager || true
 echo ""
+
+# Show deployed account summary
+echo "Deployed accounts:"
+echo "────────────────────────────────────────"
+if [[ -f "$ACCOUNTS_YAML" ]]; then
+    sudo -u "$BOT_USER" "$VENV/bin/python" -c "
+import yaml
+with open('$ACCOUNTS_YAML') as f:
+    data = yaml.safe_load(f)
+for acct in data['accounts']:
+    print(f'  {acct[\"id\"]:<25s} ({acct[\"bot_type\"]:<8s})  {acct[\"label\"]}')
+"
+fi
+echo ""
 echo "Useful commands:"
 echo "  systemctl status  $MULTI_SERVICE       # check multi-bot status"
 echo "  systemctl stop    $MULTI_SERVICE       # stop all accounts"
 echo "  systemctl restart $MULTI_SERVICE       # restart all accounts"
 echo "  journalctl -u $MULTI_SERVICE -f        # live log tail"
 echo ""
-echo "  python multi_main.py --dashboard       # performance leaderboard"
-echo "  python multi_main.py --promote         # strategy promotion report"
+echo "  cd $BOT_DIR && $VENV/bin/python multi_main.py --dashboard  # performance leaderboard"
+echo "  cd $BOT_DIR && $VENV/bin/python multi_main.py --promote    # strategy promotion report"
 echo ""
 echo "Per-account logs:"
-echo "  tail -f $BOT_DIR/logs/momentum_aggressive/app.log"
-echo "  tail -f $BOT_DIR/logs/cest_conservative/app.log"
-echo "  tail -f $BOT_DIR/logs/cest_aggressive/app.log"
+if [[ -f "$ACCOUNTS_YAML" ]]; then
+    for ACCT_ID in $(grep -E '^\s+-?\s*id:' "$ACCOUNTS_YAML" | sed 's/.*id:\s*"\?\([^"]*\)"\?.*/\1/'); do
+        echo "  tail -f $BOT_DIR/logs/$ACCT_ID/app.log"
+    done
+fi
 echo ""
 echo "Log files are in: $BOT_DIR/logs/<account_id>/"
 echo "State files in:   $BOT_DIR/data/<account_id>/"
-echo "Account config:   $BOT_DIR/config/accounts.yaml"
+echo "Account config:   $ACCOUNTS_YAML"
 echo "Env config:       $ENV_FILE"

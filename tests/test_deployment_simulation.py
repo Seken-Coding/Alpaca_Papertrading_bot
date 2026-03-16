@@ -226,6 +226,26 @@ class TestDeploymentConfigs:
         content = (ROOT / "deploy" / "setup.sh").read_text()
         assert content.startswith("#!/usr/bin/env bash")
 
+    def test_setup_script_creates_per_account_dirs(self):
+        content = (ROOT / "deploy" / "setup.sh").read_text()
+        assert "data/$ACCT_ID" in content
+        assert "logs/$ACCT_ID" in content
+
+    def test_setup_script_validates_accounts_yaml(self):
+        content = (ROOT / "deploy" / "setup.sh").read_text()
+        assert "accounts.yaml" in content
+        assert "Validating multi-bot configuration" in content
+
+    def test_setup_script_checks_env_vars(self):
+        content = (ROOT / "deploy" / "setup.sh").read_text()
+        assert "MISSING_ENVS" in content
+        assert "REQUIRED_ENVS" in content
+
+    def test_setup_script_runs_preflight(self):
+        content = (ROOT / "deploy" / "setup.sh").read_text()
+        assert "Pre-flight import check" in content
+        assert "modules imported successfully" in content
+
     def test_multi_bot_service_exists(self):
         assert (ROOT / "deploy" / "multi-bot.service").is_file()
 
