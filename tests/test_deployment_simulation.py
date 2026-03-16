@@ -246,6 +246,12 @@ class TestDeploymentConfigs:
         assert "Pre-flight import check" in content
         assert "modules imported successfully" in content
 
+    def test_setup_script_sets_python_path(self):
+        """Pre-flight check must cd into BOT_DIR so imports resolve."""
+        content = (ROOT / "deploy" / "setup.sh").read_text()
+        assert "sys.path.insert(0" in content
+        assert "os.chdir" in content
+
     def test_multi_bot_service_exists(self):
         assert (ROOT / "deploy" / "multi-bot.service").is_file()
 

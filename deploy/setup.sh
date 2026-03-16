@@ -191,7 +191,8 @@ fi
 
 # Validate YAML is parseable using the virtualenv Python
 sudo -u "$BOT_USER" "$VENV/bin/python" -c "
-import yaml, sys
+import yaml, sys, os
+os.chdir('$BOT_DIR')
 with open('$ACCOUNTS_YAML') as f:
     data = yaml.safe_load(f)
 if not data or 'accounts' not in data:
@@ -230,7 +231,9 @@ fi
 # 6c. Pre-flight import check — verify all bot modules load without errors
 info "Running pre-flight import check ..."
 sudo -u "$BOT_USER" "$VENV/bin/python" -c "
-import sys
+import sys, os
+os.chdir('$BOT_DIR')
+sys.path.insert(0, '$BOT_DIR')
 failures = []
 modules = [
     'config.settings', 'config.cest_settings', 'config.accounts',
@@ -314,7 +317,9 @@ echo "Deployed accounts:"
 echo "────────────────────────────────────────"
 if [[ -f "$ACCOUNTS_YAML" ]]; then
     sudo -u "$BOT_USER" "$VENV/bin/python" -c "
-import yaml
+import yaml, sys, os
+os.chdir('$BOT_DIR')
+sys.path.insert(0, '$BOT_DIR')
 with open('$ACCOUNTS_YAML') as f:
     data = yaml.safe_load(f)
 for acct in data['accounts']:
