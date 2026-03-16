@@ -49,6 +49,34 @@ class BrokerBase(ABC):
                         Index = datetime.
         """
 
+    def get_bars_batch(
+        self,
+        symbols: list[str],
+        timeframe: str,
+        limit: int,
+    ) -> dict[str, "pd.DataFrame"]:
+        """Fetch historical bars for multiple symbols in one request.
+
+        Default implementation falls back to per-symbol calls.
+        Subclasses should override for true batching.
+
+        Parameters
+        ----------
+        symbols   : list[str] - ticker symbols
+        timeframe : str - '1Day', '1Hour', etc.
+        limit     : int - number of bars per symbol
+
+        Returns
+        -------
+        dict[str, pd.DataFrame] : mapping symbol -> DataFrame
+        """
+        result = {}
+        for sym in symbols:
+            df = self.get_bars(sym, timeframe, limit)
+            if not df.empty:
+                result[sym] = df
+        return result
+
     @abstractmethod
     def submit_order(
         self,

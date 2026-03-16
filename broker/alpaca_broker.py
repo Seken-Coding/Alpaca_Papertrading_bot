@@ -143,6 +143,71 @@ class AlpacaBroker(BrokerBase):
             logger.error("Failed to get bars for %s: %s", symbol, clean_broker_error(e))
             return pd.DataFrame()
 
+    def get_bars_batch(
+        self,
+        symbols: list[str],
+        timeframe: str,
+        limit: int,
+    ) -> dict[str, pd.DataFrame]:
+        """Fetch historical bars for multiple symbols in a single API call."""
+        if not symbols:
+            return {}
+
+        try:
+            from alpaca.data.requests import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame
+
+            tf_map = {
+                "1Day": TimeFrame.Day,
+                "1Hour": TimeFrame.Hour,
+                "1Min": TimeFrame.Minute,
+            }
+            tf = tf_map.get(timeframe, TimeFrame.Day)
+
+            buffer_days = int(limit * 1.5) + 30
+            start = datetime.now() - timedelta(days=buffer_days)
+
+            request = StockBarsRequest(
+                symbol_or_symbols=symbols,
+                timeframe=tf,
+                start=start,
+                limit=limit * len(symbols),
+            )
+
+            bars = self._data_client.get_stock_bars(request)
+
+            result = {}
+            for symbol in symbols:
+                if symbol not in bars or len(bars[symbol]) == 0:
+                    continue
+
+                data = []
+                for bar in bars[symbol]:
+                    data.append({
+                        "open": float(bar.open),
+                        "high": float(bar.high),
+                        "low": float(bar.low),
+                        "close": float(bar.close),
+                        "volume": int(bar.volume),
+                        "timestamp": bar.timestamp,
+                    })
+
+                df = pd.DataFrame(data)
+                df.set_index("timestamp", inplace=True)
+                df.sort_index(inplace=True)
+
+                if len(df) > limit:
+                    df = df.iloc[-limit:]
+
+                result[symbol] = df
+
+            logger.info("Batch bars fetched: %d/%d symbols returned data", len(result), len(symbols))
+            return result
+
+        except Exception as e:
+            logger.error("Batch bar fetch failed: %s", clean_broker_error(e))
+            return {}
+
     def submit_order(
         self,
         symbol: str,
