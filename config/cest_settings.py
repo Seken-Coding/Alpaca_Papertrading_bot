@@ -258,5 +258,7 @@ class CestConfig:
     @classmethod
     def from_overrides(cls, overrides: dict[str, Any]) -> "CestConfig":
         """Create a CestConfig with selected parameters changed."""
-        valid = {k: v for k, v in overrides.items() if hasattr(cls, k)}
+        import dataclasses
+        field_names = {f.name for f in dataclasses.fields(cls)}
+        valid = {k: v for k, v in overrides.items() if k in field_names}
         return cls(**valid)

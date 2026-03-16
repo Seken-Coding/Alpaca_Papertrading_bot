@@ -44,12 +44,12 @@ class AccountContext:
     def create_position_store(self):
         """Create a PositionStore scoped to this account's data dir."""
         from execution.position_store import PositionStore
-        return PositionStore(path=str(self.data_dir / "positions.json"))
+        return PositionStore(path=self.data_dir / "positions.json")
 
     def create_trade_journal(self):
         """Create a TradeJournal scoped to this account's data dir."""
         from execution.trade_journal import TradeJournal
-        return TradeJournal(path=str(self.data_dir / "trade_journal.csv"))
+        return TradeJournal(path=self.data_dir / "trade_journal.csv")
 
     def create_trade_tracker(self):
         """Create a TradeTracker scoped to this account's data dir."""

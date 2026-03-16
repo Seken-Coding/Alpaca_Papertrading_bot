@@ -146,7 +146,9 @@ def _run_intraday(ctx: AccountContext, account_logger: logging.Logger) -> None:
 
     # Import and run the scheduler from main.py
     from main import _run_scheduler
-    _run_scheduler(client, risk, cfg=s, store=store, journal=journal)
+    heartbeat = str(ctx.log_dir / "heartbeat")
+    _run_scheduler(client, risk, cfg=s, store=store, journal=journal,
+                   heartbeat_path=heartbeat)
 
 
 def _run_cest(ctx: AccountContext, account_logger: logging.Logger) -> None:

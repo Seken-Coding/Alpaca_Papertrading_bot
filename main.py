@@ -42,7 +42,9 @@ from execution.position_monitor import PositionMonitor
 from execution.market_regime import MarketRegimeFilter
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-setup_logging()
+# NOTE: setup_logging() is called in main(), not at import time, so that
+# importing this module from the multi-account runner doesn't clobber
+# per-account logging configuration.
 logger = logging.getLogger(__name__)
 trades_logger = logging.getLogger("trades")
 risk_logger = logging.getLogger("risk")
@@ -57,8 +59,6 @@ _ET = ZoneInfo("America/New_York")
 def _handle_sigterm(signum, frame):
     logger.info("SIGTERM received — initiating clean shutdown")
     raise KeyboardInterrupt
-
-signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -184,14 +184,16 @@ def _scan_and_execute(
 # Scheduler loop (AUTO_EXECUTE mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _write_heartbeat(now: datetime) -> None:
-    """Write the current timestamp to logs/heartbeat for external monitoring.
+def _write_heartbeat(now: datetime, heartbeat_path: str = "logs/heartbeat") -> None:
+    """Write the current timestamp to a heartbeat file for external monitoring.
 
     Systemd or a cron job can check this file to verify the bot is alive.
     Failure to write never crashes the scheduler.
     """
     try:
-        Path("logs/heartbeat").write_text(now.isoformat(), encoding="utf-8")
+        p = Path(heartbeat_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(now.isoformat(), encoding="utf-8")
     except Exception:
         pass
 
@@ -231,7 +233,8 @@ def _in_scan_window(now_et: datetime, cfg=None) -> bool:
 
 
 def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
-                    store: PositionStore = None, journal: TradeJournal = None) -> None:
+                    store: PositionStore = None, journal: TradeJournal = None,
+                    heartbeat_path: str = "logs/heartbeat") -> None:
     """Block forever, scanning every SCAN_INTERVAL_MIN minutes while the market is open.
 
     The loop checks every 60 seconds.  When the market is open and enough
@@ -239,6 +242,9 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
     market is closed (evenings, weekends, holidays) the bot idles and logs
     a status message every 10 minutes.
     """
+    # Ensure SIGTERM triggers clean shutdown (needed when called from multi runner)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     s = cfg or settings
     scan_interval = timedelta(minutes=s.scan_interval_min)
 
@@ -271,7 +277,7 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
                     last_scan_result = ""
 
                 # Write heartbeat every tick
-                _write_heartbeat(now)
+                _write_heartbeat(now, heartbeat_path)
 
                 # ── Check market status ────────────────────────────────────
                 market_open = client.is_market_open()
@@ -373,6 +379,9 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    setup_logging()
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     logger.info("Alpaca Paper Trading Bot — %s", settings)
     client, risk = _connect()
 

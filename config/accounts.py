@@ -105,10 +105,17 @@ def load_accounts(config_path: str = "config/accounts.yaml") -> MultiAccountConf
 
     # Promotion config
     promo_raw = raw.get("promotion", {})
+    _default_weights = {
+        "sharpe_ratio": 0.30,
+        "total_return_pct": 0.25,
+        "max_drawdown_pct": 0.20,
+        "profit_factor": 0.15,
+        "win_rate": 0.10,
+    }
     promotion = PromotionConfig(
         min_trading_days=promo_raw.get("min_trading_days", 30),
         min_total_trades=promo_raw.get("min_total_trades", 20),
-        ranking_weights=promo_raw.get("ranking_weights", PromotionConfig.ranking_weights),
+        ranking_weights=promo_raw.get("ranking_weights", _default_weights),
     )
 
     return MultiAccountConfig(accounts=accounts, promotion=promotion)
