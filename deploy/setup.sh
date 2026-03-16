@@ -231,6 +231,7 @@ fi
 info "Running pre-flight import check ..."
 sudo -u "$BOT_USER" "$VENV/bin/python" -c "
 import sys
+sys.path.insert(0, '$BOT_DIR')
 failures = []
 modules = [
     'config.settings', 'config.cest_settings', 'config.accounts',
