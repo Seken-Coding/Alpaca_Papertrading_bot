@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from logging_config import setup_logging
+from logging_config import setup_logging, get_bot_status_logger
 from config.settings import settings
 from broker.client import AlpacaClient
 from strategies.momentum import MomentumStrategy
@@ -199,6 +199,7 @@ def _write_heartbeat(now: datetime, heartbeat_path: str = "logs/heartbeat") -> N
 
 
 _STATUS_INTERVAL = timedelta(minutes=10)
+_HEARTBEAT_INTERVAL = timedelta(minutes=15)
 _DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
@@ -260,9 +261,11 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
 
     last_scan_at: datetime | None = None     # When the last scan started
     last_status_log: datetime | None = None  # Timestamp of last status message
+    last_heartbeat: datetime | None = None   # Last shared heartbeat write
     last_scan_result: str = ""               # One-line summary of last scan outcome
     scans_today: int = 0                     # How many scans fired today
     current_day: date | None = None          # Track day rollovers
+    bot_status = get_bot_status_logger()
 
     try:
         while True:
@@ -281,6 +284,16 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
 
                 # ── Check market status ────────────────────────────────────
                 market_open = client.is_market_open()
+
+                # ── Shared heartbeat (every 15 min → bot_status.log) ──────
+                if last_heartbeat is None or (now - last_heartbeat) >= _HEARTBEAT_INTERVAL:
+                    last_heartbeat = now
+                    bot_status.info(
+                        "HEARTBEAT intraday     | market=%s | scans_today=%d | last=%s",
+                        "open" if market_open else "closed",
+                        scans_today,
+                        last_scan_result or "none",
+                    )
 
                 # ── Periodic status log (every 10 minutes) ────────────────
                 if last_status_log is None or (now - last_status_log) >= _STATUS_INTERVAL:

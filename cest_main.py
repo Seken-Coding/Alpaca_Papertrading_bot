@@ -39,6 +39,7 @@ from strategies.spy_macro import detect_spy_macro
 from strategies.pyramiding import check_pyramid_opportunity
 from utils.trade_tracker import TradeRecord, TradeTracker
 from utils.state import BotState, load_state, save_state, should_scan_universe
+from logging_config import setup_bot_status_logger, get_bot_status_logger
 
 logger = logging.getLogger("cest")
 
@@ -84,6 +85,9 @@ def setup_logging(log_dir=None, log_path=None):
     root.setLevel(logging.DEBUG)
     root.addHandler(fh)
     root.addHandler(ch)
+
+    # Ensure shared bot_status.log is available for heartbeat
+    setup_bot_status_logger(str(log_dir))
 
 
 def get_broker(cest_cfg=None, api_key=None, secret_key=None, paper=None):
@@ -507,6 +511,12 @@ def run_daily_cycle(broker=None, tracker=None, cest_cfg=None, state_path=None):
         len(positions), entries_placed, entries_blocked,
     )
 
+    # Write heartbeat to shared bot_status.log
+    get_bot_status_logger().info(
+        "HEARTBEAT cest           | cycle_done | positions=%d | entries=%d | blocked=%d",
+        len(positions), entries_placed, entries_blocked,
+    )
+
 
 def run_scheduled():
     """Run with a scheduler — triggers daily at configured time."""
@@ -526,8 +536,21 @@ def run_scheduled():
         cfg.DAILY_RUN_TIME,
     )
 
+    bot_status = get_bot_status_logger()
+    last_heartbeat = 0.0  # monotonic
+
     while not _shutdown:
         schedule.run_pending()
+
+        # Heartbeat every 15 minutes
+        now_mono = time.monotonic()
+        if now_mono - last_heartbeat >= 900:
+            last_heartbeat = now_mono
+            bot_status.info(
+                "HEARTBEAT cest           | waiting | next_run=%s ET",
+                cfg.DAILY_RUN_TIME,
+            )
+
         time.sleep(30)
 
     logger.info("CEST Bot shutting down gracefully")

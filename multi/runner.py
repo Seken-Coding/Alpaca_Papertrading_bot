@@ -11,6 +11,7 @@ import multiprocessing as mp
 import time
 
 from config.accounts import AccountConfig, MultiAccountConfig, load_accounts
+from logging_config import setup_bot_status_logger, get_bot_status_logger
 from multi.context import AccountContext
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,9 @@ class MultiAccountRunner:
 
     def monitor(self) -> None:
         """Block forever, restarting crashed processes."""
+        bot_status = get_bot_status_logger()
+        last_heartbeat = 0.0  # monotonic
+
         try:
             while True:
                 for acct_id, proc in list(self._processes.items()):
@@ -72,6 +76,19 @@ class MultiAccountRunner:
                                 "Account '%s' exited cleanly (code %s)",
                                 acct_id, exit_code,
                             )
+
+                # Heartbeat every 15 minutes
+                now_mono = time.monotonic()
+                if now_mono - last_heartbeat >= 900:
+                    last_heartbeat = now_mono
+                    alive = [aid for aid, p in self._processes.items() if p.is_alive()]
+                    dead = [aid for aid, p in self._processes.items() if not p.is_alive()]
+                    bot_status.info(
+                        "HEARTBEAT multi-account  | accounts=%d | alive=%s | dead=%s",
+                        len(self._processes), ",".join(alive) or "none",
+                        ",".join(dead) or "none",
+                    )
+
                 time.sleep(30)
         except KeyboardInterrupt:
             logger.info("Shutting down all accounts...")
@@ -103,6 +120,8 @@ def _run_account(config: AccountConfig) -> None:
     """Entry point for a single account process."""
     ctx = AccountContext(config)
     account_logger = ctx.setup_logging()
+    # Ensure shared bot_status.log is available for heartbeat in this process
+    setup_bot_status_logger()
 
     account_logger.info(
         "Account process started: %s (%s) — bot_type=%s",

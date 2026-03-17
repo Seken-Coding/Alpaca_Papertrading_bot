@@ -27,6 +27,9 @@ config/secrets.*
 # Data files (bot state, trade logs)
 data/
 
+# Bar data cache
+cache/
+
 # Logs
 logs/
 *.log

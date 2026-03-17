@@ -27,6 +27,12 @@ scanner.log
     One entry per scan run with full recommendation list.
     Rotating: 5 MB per file, 5 copies.
 
+bot_status.log
+    Shared heartbeat log for **all** bots (intraday, CEST, multi-account).
+    Each bot writes a heartbeat line every 15 minutes so operators can
+    ``tail -f logs/bot_status.log`` to monitor all bots at a glance.
+    Rotating: 5 MB per file, 5 copies.
+
 Console
     INFO-and-above, coloured by level when the terminal supports it.
     Can be suppressed by passing ``console=False``.
@@ -140,6 +146,9 @@ def setup_logging(
     # ── scanner.log — scan results ────────────────────────────────────
     _isolated_logger("strategies.scanner", log_path / "scanner.log", logging.DEBUG, file_formatter, max_bytes=5 * 1024 * 1024, backup_count=5)
 
+    # ── bot_status.log — shared heartbeat for all bots ────────────────
+    setup_bot_status_logger(log_dir)
+
     # ── Console ───────────────────────────────────────────────────────
     if console:
         use_colour = _supports_colour(sys.stderr)
@@ -223,3 +232,45 @@ def get_trades_logger() -> logging.Logger:
 def get_risk_logger() -> logging.Logger:
     """Return the dedicated risk-management logger."""
     return logging.getLogger("risk")
+
+
+def get_bot_status_logger() -> logging.Logger:
+    """Return the shared bot-status heartbeat logger.
+
+    All three bots (intraday, CEST, multi-account) write to this logger.
+    The output goes to ``logs/bot_status.log`` — one file to check them all.
+    """
+    return logging.getLogger("bot_status")
+
+
+def setup_bot_status_logger(log_dir: str | None = None) -> logging.Logger:
+    """Ensure the ``bot_status`` logger has a file handler.
+
+    Safe to call multiple times — skips if a handler is already attached.
+    This is called automatically by ``setup_logging()`` but can also be
+    called standalone by bots that use their own logging setup (e.g. CEST,
+    multi-account) so they still write to the shared ``bot_status.log``.
+    """
+    status_logger = logging.getLogger("bot_status")
+    if status_logger.handlers:
+        return status_logger  # already configured
+
+    log_path = Path(log_dir or os.getenv("LOG_DIR", "logs"))
+    log_path.mkdir(parents=True, exist_ok=True)
+
+    status_logger.setLevel(logging.INFO)
+    status_logger.propagate = False  # don't duplicate into app.log
+
+    handler = logging.handlers.RotatingFileHandler(
+        log_path / "bot_status.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)-8s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    status_logger.addHandler(handler)
+    return status_logger
