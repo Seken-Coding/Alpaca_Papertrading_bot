@@ -102,22 +102,27 @@ def get_broker(cest_cfg=None, api_key=None, secret_key=None, paper=None):
 def fetch_all_bars(broker, universe: list[str], timeframe: str = "1Day", limit: int = 252) -> dict:
     """Fetch daily bars for the entire universe.
 
+    Uses batch fetching to retrieve all symbols in a single API call
+    (with shared disk cache for cross-bot deduplication).
+
     Returns
     -------
     dict : symbol -> pd.DataFrame (OHLCV)
     """
     market_data = {}
-    failed = []
 
+    try:
+        all_bars = broker.get_bars_batch(universe, timeframe, limit)
+    except Exception as e:
+        logger.error("Batch bar fetch failed: %s", e)
+        all_bars = {}
+
+    failed = []
     for symbol in universe:
-        try:
-            bars = broker.get_bars(symbol, timeframe, limit)
-            if not bars.empty and len(bars) >= 50:  # Need minimum data
-                market_data[symbol] = bars
-            else:
-                failed.append(symbol)
-        except Exception as e:
-            logger.warning("Failed to fetch bars for %s: %s", symbol, e)
+        bars = all_bars.get(symbol)
+        if bars is not None and not bars.empty and len(bars) >= 50:
+            market_data[symbol] = bars
+        else:
             failed.append(symbol)
 
     if failed:
