@@ -251,7 +251,7 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
     # Shared across ticks — created once
     _store = store or PositionStore()
     _journal = journal or TradeJournal()
-    _monitor = PositionMonitor(client=client, store=_store, journal=_journal)
+    _monitor = PositionMonitor(client=client, store=_store, journal=_journal, cfg=s)
 
     logger.info(
         "Scheduler started — scanning every %dm while market is open (AUTO_EXECUTE=%s)",

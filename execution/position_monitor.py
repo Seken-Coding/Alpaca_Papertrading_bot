@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from alpaca.trading.enums import OrderSide
 
 from broker.client import AlpacaClient
-from config.settings import settings
 from execution.position_store import PositionStore
 from execution.trade_journal import TradeJournal
 
@@ -34,14 +33,24 @@ class PositionMonitor:
         client: AlpacaClient,
         store: PositionStore,
         journal: TradeJournal,
+        cfg=None,
     ):
         self.client = client
         self.store = store
         self.journal = journal
+        self._cfg = cfg
+
+    @property
+    def _settings(self):
+        """Return per-account cfg if provided, otherwise fall back to global settings."""
+        if self._cfg is not None:
+            return self._cfg
+        from config.settings import settings
+        return settings
 
     def run(self) -> None:
         """Execute one monitoring cycle. All failures are caught internally."""
-        if not settings.position_monitor:
+        if not self._settings.position_monitor:
             return
 
         try:
@@ -89,7 +98,7 @@ class PositionMonitor:
         if (
             meta is not None
             and not meta.get("trailing_upgraded", False)
-            and settings.trailing_stop_pct > 0
+            and self._settings.trailing_stop_pct > 0
         ):
             entry_atr = meta.get("entry_atr", 0.0)
             is_long = qty > 0
@@ -103,16 +112,16 @@ class PositionMonitor:
                 self._upgrade_to_trailing_stop(symbol, qty, meta)
 
         # ── 2. Time-based exit ──────────────────────────────────────
-        if meta is not None and settings.max_hold_days > 0:
+        if meta is not None and self._settings.max_hold_days > 0:
             entry_time_str = meta.get("entry_time", "")
             if entry_time_str:
                 try:
                     entry_time = datetime.fromisoformat(entry_time_str)
                     age_days = (datetime.now(timezone.utc) - entry_time).days
-                    if age_days >= settings.max_hold_days:
+                    if age_days >= self._settings.max_hold_days:
                         logger.info(
                             "PositionMonitor: %s held %d days (max %d) — closing",
-                            symbol, age_days, settings.max_hold_days,
+                            symbol, age_days, self._settings.max_hold_days,
                         )
                         self._close_and_journal(
                             symbol, qty, current_price, avg_entry, meta,
@@ -169,13 +178,13 @@ class PositionMonitor:
                 symbol=symbol,
                 qty=abs(qty),
                 side=close_side,
-                trail_percent=settings.trailing_stop_pct,
+                trail_percent=self._settings.trailing_stop_pct,
             )
             self.store.mark_trailing_upgraded(symbol)
 
             trades_logger.info(
                 "TRAILING STOP | %s | qty=%d trail=%.1f%% order_id=%s",
-                symbol, qty, settings.trailing_stop_pct, order.id,
+                symbol, qty, self._settings.trailing_stop_pct, order.id,
             )
 
         except Exception as exc:
