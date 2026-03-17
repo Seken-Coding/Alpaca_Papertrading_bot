@@ -126,12 +126,17 @@ class AlpacaBroker(BrokerBase):
 
             bars = self._data_client.get_stock_bars(request)
 
-            if symbol not in bars or len(bars[symbol]) == 0:
+            try:
+                symbol_bars = bars[symbol]
+            except KeyError:
+                symbol_bars = []
+
+            if not symbol_bars:
                 logger.warning("No bar data returned for %s", symbol)
                 return pd.DataFrame()
 
             data = []
-            for bar in bars[symbol]:
+            for bar in symbol_bars:
                 data.append({
                     "open": float(bar.open),
                     "high": float(bar.high),
@@ -210,11 +215,15 @@ class AlpacaBroker(BrokerBase):
 
             fetched = {}
             for symbol in remaining:
-                if symbol not in bars or len(bars[symbol]) == 0:
+                try:
+                    symbol_bars = bars[symbol]
+                except KeyError:
+                    continue
+                if not symbol_bars:
                     continue
 
                 data = []
-                for bar in bars[symbol]:
+                for bar in symbol_bars:
                     data.append({
                         "open": float(bar.open),
                         "high": float(bar.high),
