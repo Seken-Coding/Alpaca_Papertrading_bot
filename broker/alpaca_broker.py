@@ -7,13 +7,14 @@ Connects to paper trading or live trading based on configuration.
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from dotenv import load_dotenv
 
 from broker.base import BrokerBase
 from broker.errors import clean_broker_error
+from utils.bar_cache import get_shared_cache
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,18 @@ class AlpacaBroker(BrokerBase):
             raise
 
     def get_bars(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
-        """Fetch historical bars from Alpaca data API."""
+        """Fetch historical bars from Alpaca data API.
+
+        Results are cached on disk so concurrent bots/accounts sharing the
+        same ``cache/bars/`` directory avoid redundant API calls.
+        """
+        # 1. Check shared cache
+        cache = get_shared_cache()
+        cached = cache.get(symbol, timeframe, limit)
+        if cached is not None:
+            return cached
+
+        # 2. Fetch from API
         try:
             from alpaca.data.requests import StockBarsRequest
             from alpaca.data.timeframe import TimeFrame
@@ -103,7 +115,7 @@ class AlpacaBroker(BrokerBase):
 
             # Calculate start date based on limit (add buffer for weekends/holidays)
             buffer_days = int(limit * 1.5) + 30
-            start = datetime.now() - timedelta(days=buffer_days)
+            start = datetime.now(timezone.utc) - timedelta(days=buffer_days)
 
             request = StockBarsRequest(
                 symbol_or_symbols=symbol,
@@ -137,6 +149,9 @@ class AlpacaBroker(BrokerBase):
             if len(df) > limit:
                 df = df.iloc[-limit:]
 
+            # 3. Store in cache for other bots/accounts
+            cache.put(symbol, timeframe, limit, df)
+
             return df
 
         except Exception as e:
@@ -149,10 +164,27 @@ class AlpacaBroker(BrokerBase):
         timeframe: str,
         limit: int,
     ) -> dict[str, pd.DataFrame]:
-        """Fetch historical bars for multiple symbols in a single API call."""
+        """Fetch historical bars for multiple symbols in a single API call.
+
+        Symbols already present in the shared disk cache are served from
+        cache; only the remaining symbols are fetched from the Alpaca API.
+        """
         if not symbols:
             return {}
 
+        cache = get_shared_cache()
+
+        # 1. Satisfy as many symbols as possible from cache
+        result = cache.get_many(symbols, timeframe, limit)
+        remaining = [s for s in symbols if s not in result]
+
+        if not remaining:
+            logger.info(
+                "Batch bars: all %d/%d symbols served from cache", len(result), len(symbols),
+            )
+            return result
+
+        # 2. Fetch the rest from API
         try:
             from alpaca.data.requests import StockBarsRequest
             from alpaca.data.timeframe import TimeFrame
@@ -165,19 +197,19 @@ class AlpacaBroker(BrokerBase):
             tf = tf_map.get(timeframe, TimeFrame.Day)
 
             buffer_days = int(limit * 1.5) + 30
-            start = datetime.now() - timedelta(days=buffer_days)
+            start = datetime.now(timezone.utc) - timedelta(days=buffer_days)
 
             request = StockBarsRequest(
-                symbol_or_symbols=symbols,
+                symbol_or_symbols=remaining,
                 timeframe=tf,
                 start=start,
-                limit=limit * len(symbols),
+                limit=limit * len(remaining),
             )
 
             bars = self._data_client.get_stock_bars(request)
 
-            result = {}
-            for symbol in symbols:
+            fetched = {}
+            for symbol in remaining:
                 if symbol not in bars or len(bars[symbol]) == 0:
                     continue
 
@@ -199,14 +231,22 @@ class AlpacaBroker(BrokerBase):
                 if len(df) > limit:
                     df = df.iloc[-limit:]
 
-                result[symbol] = df
+                fetched[symbol] = df
 
-            logger.info("Batch bars fetched: %d/%d symbols returned data", len(result), len(symbols))
+            # 3. Cache newly fetched data
+            cache.put_many(fetched, timeframe, limit)
+            result.update(fetched)
+
+            cached_count = len(symbols) - len(remaining)
+            logger.info(
+                "Batch bars fetched: %d/%d symbols returned data (%d from cache, %d from API)",
+                len(result), len(symbols), cached_count, len(fetched),
+            )
             return result
 
         except Exception as e:
             logger.error("Batch bar fetch failed: %s", clean_broker_error(e))
-            return {}
+            return result  # return whatever we got from cache
 
     def submit_order(
         self,

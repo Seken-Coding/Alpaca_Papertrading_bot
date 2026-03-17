@@ -4,6 +4,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from utils.bar_cache import BarCache
+
+
+@pytest.fixture(autouse=True)
+def _isolate_bar_cache(tmp_path, monkeypatch):
+    """Give every test an empty bar cache so cached data never leaks between tests."""
+    isolated = BarCache(cache_dir=tmp_path / "bar_cache", ttl=300)
+    monkeypatch.setattr("utils.bar_cache._shared_cache", isolated)
+
 
 @pytest.fixture
 def sample_ohlcv():
