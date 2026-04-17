@@ -25,5 +25,5 @@ try:
         "detect_regime",
     ]
 except ImportError:
-    # alpaca-py not installed — CEST modules still work independently
+    # alpaca-py not installed — defer analysis imports until runtime env is ready
     __all__ = []

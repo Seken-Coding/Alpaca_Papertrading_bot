@@ -42,7 +42,7 @@ class PositionMonitor:
 
     @property
     def _settings(self):
-        """Return per-account cfg if provided, otherwise fall back to global settings."""
+        """Return injected runtime settings when provided, else global settings."""
         if self._cfg is not None:
             return self._cfg
         from config.settings import settings

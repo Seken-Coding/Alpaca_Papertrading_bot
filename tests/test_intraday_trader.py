@@ -2,20 +2,17 @@
 
 Tests the full scan → execute → monitor pipeline with mocked Alpaca API,
 verifying that:
-- Multi-bot mode works without ALPACA_API_KEY in env
-- PositionMonitor uses per-account settings (not global)
+- PositionMonitor uses injected settings (not global)
 - _run_scheduler wires components correctly
 - _scan_and_execute handles edge cases
-- Settings.with_overrides applies account-specific values
+- Settings load correctly from single-account environment variables
 - The full pipeline doesn't crash on realistic data
 """
 
 import os
-import types
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -91,7 +88,7 @@ def _make_ohlcv(n=300, seed=42):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1. PositionMonitor — per-account settings
+# 1. PositionMonitor — injected settings
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestPositionMonitorSettings:
@@ -130,7 +127,7 @@ class TestPositionMonitorSettings:
         client.get_positions.assert_called_once()
 
     def test_trailing_stop_uses_cfg_value(self):
-        """Trailing stop percentage must come from per-account cfg."""
+        """Trailing stop percentage must come from injected cfg."""
         from execution.position_monitor import PositionMonitor
 
         cfg = FakeSettings(trailing_stop_pct=2.5, position_monitor=True)
@@ -162,7 +159,7 @@ class TestPositionMonitorSettings:
         assert call_kwargs[1]["trail_percent"] == 2.5
 
     def test_max_hold_days_uses_cfg_value(self):
-        """Time-based exit must use per-account max_hold_days."""
+        """Time-based exit must use injected max_hold_days."""
         from execution.position_monitor import PositionMonitor
 
         cfg = FakeSettings(max_hold_days=1, position_monitor=True, trailing_stop_pct=0)
@@ -216,51 +213,54 @@ class TestPositionMonitorSettings:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 2. Settings.with_overrides
+# 2. Settings loading
 # ──────────────────────────────────────────────────────────────────────────────
 
-class TestSettingsWithOverrides:
-    """Verify Settings.with_overrides creates proper per-account settings."""
+class TestSettingsLoading:
+    """Verify single-account settings load from environment variables."""
 
-    def test_basic_overrides(self):
+    def test_reads_env_values(self, monkeypatch):
         from config.settings import Settings
 
-        s = Settings.with_overrides(
-            api_key="key1", secret_key="secret1", paper=True,
-            trailing_stop_pct=2.5,
-            max_orders_per_scan=8,
-            scan_interval_min=3,
-        )
-        assert s.api_key == "key1"
-        assert s.secret_key == "secret1"
-        assert s.trailing_stop_pct == 2.5
-        assert s.max_orders_per_scan == 8
-        assert s.scan_interval_min == 3
+        monkeypatch.setenv("ALPACA_API_KEY", "test_key")
+        monkeypatch.setenv("ALPACA_SECRET_KEY", "test_secret")
+        monkeypatch.setenv("ALPACA_PAPER", "true")
+        monkeypatch.setenv("AUTO_EXECUTE", "true")
+        monkeypatch.setenv("SCAN_INTERVAL_MIN", "7")
+        monkeypatch.setenv("MAX_ORDERS_PER_SCAN", "4")
+        monkeypatch.setenv("POSITION_MONITOR", "false")
+        monkeypatch.setenv("TRAILING_STOP_PCT", "1.7")
+        monkeypatch.setenv("MAX_HOLD_DAYS", "2")
+        monkeypatch.setenv("REGIME_FILTER", "true")
+        monkeypatch.setenv("SCAN_START_ET", "10:15")
+        monkeypatch.setenv("SCAN_END_ET", "15:00")
+        monkeypatch.setenv("UNIVERSE", "dynamic")
+        monkeypatch.setenv("UNIVERSE_CACHE_TTL", "7200")
 
-    def test_auto_execute_defaults_true(self):
-        from config.settings import Settings
-
-        s = Settings.with_overrides(api_key="k", secret_key="s")
+        s = Settings()
+        assert s.api_key == "test_key"
+        assert s.secret_key == "test_secret"
+        assert s.paper is True
         assert s.auto_execute is True
-
-    def test_unknown_override_ignored(self):
-        from config.settings import Settings
-
-        # Should not raise, just log a warning
-        s = Settings.with_overrides(
-            api_key="k", secret_key="s",
-            nonexistent_field="value",
-        )
-        assert not hasattr(s, "nonexistent_field")
-
-    def test_position_monitor_overridable(self):
-        from config.settings import Settings
-
-        s = Settings.with_overrides(
-            api_key="k", secret_key="s",
-            position_monitor=False,
-        )
+        assert s.scan_interval_min == 7
+        assert s.max_orders_per_scan == 4
         assert s.position_monitor is False
+        assert s.trailing_stop_pct == 1.7
+        assert s.max_hold_days == 2
+        assert s.regime_filter is True
+        assert s.scan_start_et == "10:15"
+        assert s.scan_end_et == "15:00"
+        assert s.universe_mode == "dynamic"
+        assert s.universe_cache_ttl == 7200
+
+    def test_missing_credentials_raise(self, monkeypatch):
+        from config.settings import Settings
+
+        monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+        monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+
+        with pytest.raises(EnvironmentError):
+            Settings()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -483,57 +483,7 @@ class TestRiskManagerPlausibility:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 7. Multi-bot runner plausibility
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestMultiBotRunnerPlausibility:
-    """Verify the multi-bot runner wires intraday correctly."""
-
-    def test_run_intraday_passes_cfg_to_scheduler(self):
-        """_run_intraday must pass per-account cfg to _run_scheduler."""
-        import multi.runner as runner_mod
-        source = open(runner_mod.__file__).read()
-
-        # Verify _run_intraday calls _run_scheduler with cfg=s
-        assert "cfg=s" in source, (
-            "_run_intraday must pass cfg=s to _run_scheduler"
-        )
-
-    def test_scheduler_passes_cfg_to_position_monitor(self):
-        """_run_scheduler must pass cfg to PositionMonitor."""
-        import main as main_mod
-        source = open(main_mod.__file__).read()
-
-        assert "cfg=" in source.split("PositionMonitor(")[1].split(")")[0], (
-            "_run_scheduler must pass cfg to PositionMonitor constructor"
-        )
-
-    def test_account_context_creates_valid_settings(self):
-        """AccountContext.create_settings must return a Settings with overrides applied."""
-        from config.accounts import AccountConfig
-        from multi.context import AccountContext
-
-        config = AccountConfig(
-            id="test_acct",
-            label="Test Account",
-            bot_type="intraday",
-            api_key="test-api-key",
-            secret_key="test-secret-key",
-            paper=True,
-            strategy_overrides={"trailing_stop_pct": 2.5, "max_orders_per_scan": 8},
-        )
-        ctx = AccountContext(config)
-        s = ctx.create_settings()
-
-        assert s.api_key == "test-api-key"
-        assert s.secret_key == "test-secret-key"
-        assert s.trailing_stop_pct == 2.5
-        assert s.max_orders_per_scan == 8
-        assert s.auto_execute is True  # multi-bot always auto-executes
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 8. _scan_and_execute plausibility
+# 7. _scan_and_execute plausibility
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestScanAndExecutePlausibility:
@@ -588,7 +538,7 @@ class TestScanAndExecutePlausibility:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9. PositionStore and TradeJournal plausibility
+# 8. PositionStore and TradeJournal plausibility
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestPositionStorePlausibility:
@@ -658,7 +608,7 @@ class TestTradeJournalPlausibility:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 10. Indicator pipeline plausibility
+# 9. Indicator pipeline plausibility
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestIndicatorPipelinePlausibility:
@@ -700,11 +650,11 @@ class TestIndicatorPipelinePlausibility:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 11. End-to-end wiring: multi-bot → intraday → monitor
+# 10. End-to-end wiring: scheduler → intraday → monitor
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestEndToEndWiring:
-    """Verify the complete multi-bot → intraday pipeline is wired correctly."""
+    """Verify the complete scheduler → intraday pipeline is wired correctly."""
 
     def test_position_monitor_receives_cfg_from_scheduler(self):
         """When _run_scheduler creates PositionMonitor, it must pass cfg."""

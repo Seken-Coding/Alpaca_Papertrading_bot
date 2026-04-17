@@ -28,9 +28,9 @@ scanner.log
     Rotating: 5 MB per file, 5 copies.
 
 bot_status.log
-    Shared heartbeat log for **all** bots (intraday, CEST, multi-account).
-    Each bot writes a heartbeat line every 15 minutes so operators can
-    ``tail -f logs/bot_status.log`` to monitor all bots at a glance.
+    Shared heartbeat log for the intraday scheduler.
+    The bot writes a heartbeat line every 15 minutes so operators can
+    ``tail -f logs/bot_status.log`` to monitor liveness at a glance.
     Rotating: 5 MB per file, 5 copies.
 
 Console
@@ -146,7 +146,7 @@ def setup_logging(
     # ── scanner.log — scan results ────────────────────────────────────
     _isolated_logger("strategies.scanner", log_path / "scanner.log", logging.DEBUG, file_formatter, max_bytes=5 * 1024 * 1024, backup_count=5)
 
-    # ── bot_status.log — shared heartbeat for all bots ────────────────
+# ── bot_status.log — scheduler heartbeat log ───────────────────────
     setup_bot_status_logger(log_dir)
 
     # ── Console ───────────────────────────────────────────────────────
@@ -237,8 +237,8 @@ def get_risk_logger() -> logging.Logger:
 def get_bot_status_logger() -> logging.Logger:
     """Return the shared bot-status heartbeat logger.
 
-    All three bots (intraday, CEST, multi-account) write to this logger.
-    The output goes to ``logs/bot_status.log`` — one file to check them all.
+    The intraday scheduler writes heartbeat messages to this logger.
+    The output goes to ``logs/bot_status.log`` for quick liveness checks.
     """
     return logging.getLogger("bot_status")
 
@@ -248,8 +248,8 @@ def setup_bot_status_logger(log_dir: str | None = None) -> logging.Logger:
 
     Safe to call multiple times — skips if a handler is already attached.
     This is called automatically by ``setup_logging()`` but can also be
-    called standalone by bots that use their own logging setup (e.g. CEST,
-    multi-account) so they still write to the shared ``bot_status.log``.
+    called standalone by scripts that use their own logging setup so they
+    still write to the shared ``bot_status.log``.
     """
     status_logger = logging.getLogger("bot_status")
     if status_logger.handlers:

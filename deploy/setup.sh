@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Alpaca Paper Trading Bot — VPS Setup Script
-# Tested on: Ubuntu 22.04 LTS / 24.04 LTS (IONOS VPS)
+# Alpaca Paper Trading Bot — VPS Setup Script (Intraday Only)
+# Tested on: Ubuntu 22.04 LTS / 24.04 LTS
 #
 # Run as root:
 #   chmod +x setup.sh
@@ -10,22 +10,23 @@
 # What this script does:
 #   1. Installs Python 3.13 via the deadsnakes PPA
 #   2. Creates a dedicated 'trading' system user
-#   3. Copies the bot to /opt/trading-bot/ (with per-account directories)
+#   3. Copies the bot to /opt/trading-bot/
 #   4. Creates a Python virtualenv and installs dependencies
-#   5. Prompts you to fill in your .env (API keys, automation settings)
-#   6. Validates accounts.yaml, verifies env vars, runs pre-flight checks
-#   7. Stops old single-bot services (if present) and installs multi-bot service
+#   5. Prompts you to fill in your .env (single Alpaca paper account)
+#   6. Validates .env and runs pre-flight import checks
+#   7. Installs/starts intraday-bot systemd service
 # =============================================================================
 
 set -euo pipefail
 
 BOT_DIR="/opt/trading-bot"
 BOT_USER="trading"
-MULTI_SERVICE="multi-bot"
-# Legacy services (stopped and removed during migration)
-LEGACY_CEST_SERVICE="trading-bot"
-LEGACY_INTRADAY_SERVICE="intraday-bot"
 PYTHON_BIN="python3.13"
+TARGET_SERVICE="intraday-bot"
+TARGET_SERVICE_SRC="deploy/intraday-bot.service"
+
+# Legacy services to clean up if present
+LEGACY_SERVICES=("multi-bot" "trading-bot")
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -36,15 +37,20 @@ err()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 # ── Must run as root ─────────────────────────────────────────────────────────
 [[ "$EUID" -eq 0 ]] || err "Please run as root: sudo ./setup.sh"
 
-# ── Detect if bot source is in the same directory as this script ─────────────
+# ── Detect source directory ──────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BOT_SOURCE="$(dirname "$SCRIPT_DIR")"   # parent of deploy/
+BOT_SOURCE="$(dirname "$SCRIPT_DIR")"
 
-if [[ ! -f "$BOT_SOURCE/multi_main.py" ]]; then
-    err "Could not find multi_main.py in $BOT_SOURCE. Run this script from the deploy/ directory."
+if [[ ! -f "$BOT_SOURCE/main.py" ]]; then
+    err "Could not find main.py in $BOT_SOURCE. Run this script from deploy/."
+fi
+
+if [[ ! -f "$BOT_SOURCE/$TARGET_SERVICE_SRC" ]]; then
+    err "Missing service file: $TARGET_SERVICE_SRC"
 fi
 
 info "Bot source directory: $BOT_SOURCE"
+info "Mode: intraday only"
 
 # =============================================================================
 # 1. System packages & Python 3.13
@@ -62,7 +68,6 @@ apt-get install -y -qq \
     libssl-dev \
     libffi-dev
 
-# Add deadsnakes PPA for Python 3.13
 if ! command -v python3.13 &>/dev/null; then
     info "Adding deadsnakes PPA and installing Python 3.13 ..."
     add-apt-repository -y ppa:deadsnakes/ppa
@@ -88,37 +93,20 @@ fi
 info "Deploying bot to $BOT_DIR ..."
 mkdir -p "$BOT_DIR"
 
-# Copy all project files except virtual environments, git history, logs, and __pycache__
 rsync -a --exclude='.git' \
           --exclude='*.pyc' \
           --exclude='__pycache__' \
           --exclude='venv' \
           --exclude='.venv' \
           --exclude='logs' \
+          --exclude='data' \
           --exclude='.env' \
           "$BOT_SOURCE/" "$BOT_DIR/"
 
-# Create writable runtime directories (shared + per-account)
 mkdir -p "$BOT_DIR/logs"
 mkdir -p "$BOT_DIR/data"
 
-# Create per-account data and log directories from accounts.yaml
-ACCOUNTS_YAML="$BOT_DIR/config/accounts.yaml"
-if [[ -f "$ACCOUNTS_YAML" ]]; then
-    # Extract account IDs — lightweight grep, no Python needed yet
-    ACCOUNT_IDS=$(grep -E '^\s+-?\s*id:' "$ACCOUNTS_YAML" | sed 's/.*id:\s*"\?\([^"]*\)"\?.*/\1/')
-    for ACCT_ID in $ACCOUNT_IDS; do
-        mkdir -p "$BOT_DIR/data/$ACCT_ID"
-        mkdir -p "$BOT_DIR/logs/$ACCT_ID"
-        info "Created dirs for account '$ACCT_ID'"
-    done
-else
-    warn "accounts.yaml not found — skipping per-account directory setup"
-fi
-
-# Set ownership
 chown -R "$BOT_USER:$BOT_USER" "$BOT_DIR"
-
 info "Files deployed to $BOT_DIR"
 
 # =============================================================================
@@ -147,7 +135,6 @@ ENV_FILE="$BOT_DIR/.env"
 
 if [[ -f "$ENV_FILE" ]]; then
     warn ".env already exists at $ENV_FILE — not overwriting"
-    warn "Edit it manually to add ACCT1/2/3 API keys if not already set."
 else
     info "Creating .env from template ..."
     cp "$BOT_DIR/.env.example" "$ENV_FILE"
@@ -159,77 +146,35 @@ else
     echo "  ACTION REQUIRED: edit your .env file with real credentials"
     echo "  File location: $ENV_FILE"
     echo ""
-    echo "  Multi-account mode requires per-account API keys:"
-    echo "    ACCT1_API_KEY=<account 1 API key>"
-    echo "    ACCT1_SECRET_KEY=<account 1 secret key>"
-    echo "    ACCT2_API_KEY=<account 2 API key>"
-    echo "    ACCT2_SECRET_KEY=<account 2 secret key>"
-    echo "    ACCT3_API_KEY=<account 3 API key>"
-    echo "    ACCT3_SECRET_KEY=<account 3 secret key>"
-    echo ""
-    echo "  Account mapping (see config/accounts.yaml):"
-    echo "    ACCT1 → momentum_aggressive (intraday)"
-    echo "    ACCT2 → cest_conservative   (CEST daily)"
-    echo "    ACCT3 → cest_aggressive     (CEST daily + pyramiding)"
-    echo ""
-    echo "  You can also keep ALPACA_API_KEY/SECRET_KEY for standalone"
-    echo "  main.py/cest_main.py usage (optional)."
+    echo "  Required keys for paper trading:"
+    echo "    ALPACA_API_KEY=<your Alpaca paper API key>"
+    echo "    ALPACA_SECRET_KEY=<your Alpaca paper secret key>"
+    echo "    ALPACA_PAPER=true"
     echo "================================================================"
     echo ""
     read -rp "Press Enter after you have filled in $ENV_FILE ..."
 fi
 
 # =============================================================================
-# 6. Validate accounts.yaml and .env for multi-bot deployment
+# 6. Validate .env and run pre-flight checks
 # =============================================================================
-info "Validating multi-bot configuration ..."
+info "Validating intraday configuration ..."
 
-# 6a. Parse accounts.yaml and extract required env var names
-if [[ ! -f "$ACCOUNTS_YAML" ]]; then
-    err "accounts.yaml not found at $ACCOUNTS_YAML — cannot deploy multi-bot"
+if ! grep -qE '^\s*ALPACA_API_KEY\s*=\s*[^[:space:]#]+' "$ENV_FILE"; then
+    err "ALPACA_API_KEY is missing or empty in $ENV_FILE"
 fi
 
-# Validate YAML is parseable using the virtualenv Python
-sudo -u "$BOT_USER" "$VENV/bin/python" -c "
-import os, sys, yaml
-os.chdir('$BOT_DIR')
-sys.path.insert(0, '$BOT_DIR')
-with open('$ACCOUNTS_YAML') as f:
-    data = yaml.safe_load(f)
-if not data or 'accounts' not in data:
-    print('ERROR: accounts.yaml missing \"accounts\" key', file=sys.stderr)
-    sys.exit(1)
-for acct in data['accounts']:
-    for key in ('id', 'bot_type', 'api_key_env', 'secret_key_env'):
-        if key not in acct:
-            print(f'ERROR: account missing required field \"{key}\"', file=sys.stderr)
-            sys.exit(1)
-    if acct['bot_type'] not in ('intraday', 'cest'):
-        print(f'ERROR: account \"{acct[\"id\"]}\" has invalid bot_type \"{acct[\"bot_type\"]}\"', file=sys.stderr)
-        sys.exit(1)
-print(f'OK — {len(data[\"accounts\"])} accounts configured')
-" || err "accounts.yaml validation failed"
+if ! grep -qE '^\s*ALPACA_SECRET_KEY\s*=\s*[^[:space:]#]+' "$ENV_FILE"; then
+    err "ALPACA_SECRET_KEY is missing or empty in $ENV_FILE"
+fi
 
-# 6b. Verify required ACCT* env vars exist in .env
-REQUIRED_ENVS=$(grep -oE 'ACCT[0-9]+_(API_KEY|SECRET_KEY)' "$ACCOUNTS_YAML" | sort -u)
-MISSING_ENVS=""
-for VAR in $REQUIRED_ENVS; do
-    if ! grep -qE "^${VAR}=" "$ENV_FILE" 2>/dev/null; then
-        MISSING_ENVS="${MISSING_ENVS}  ${VAR}\n"
-    fi
-done
-
-if [[ -n "$MISSING_ENVS" ]]; then
-    warn "The following env vars are referenced in accounts.yaml but not set in .env:"
-    echo -e "$MISSING_ENVS"
-    warn "The multi-bot service will fail to start until these are set."
+if grep -qE '^\s*ALPACA_PAPER\s*=\s*false\s*$' "$ENV_FILE"; then
+    warn "ALPACA_PAPER=false detected in $ENV_FILE"
+    warn "This repository is intended for paper trading only."
     read -rp "Continue anyway? [y/N] " CONTINUE
-    [[ "$CONTINUE" =~ ^[Yy]$ ]] || err "Aborted — please fill in $ENV_FILE first"
-else
-    info "All required env vars found in .env"
+    [[ "$CONTINUE" =~ ^[Yy]$ ]] || err "Aborted — set ALPACA_PAPER=true and rerun"
 fi
 
-# 6c. Pre-flight import check — verify all bot modules load without errors
 info "Running pre-flight import check ..."
 sudo -u "$BOT_USER" "$VENV/bin/python" -c "
 import os, sys
@@ -237,19 +182,16 @@ os.chdir('$BOT_DIR')
 sys.path.insert(0, '$BOT_DIR')
 failures = []
 modules = [
-    'config.settings', 'config.cest_settings', 'config.accounts',
-    'broker.client', 'broker.alpaca_broker', 'broker.errors',
-    'strategies.momentum', 'strategies.mean_reversion', 'strategies.scanner',
-    'strategies.regime', 'strategies.entries', 'strategies.exits',
-    'strategies.pyramiding', 'strategies.spy_macro', 'strategies.darvas_box',
-    'execution.engine', 'execution.position_store', 'execution.trade_journal',
-    'execution.position_monitor', 'execution.market_regime',
-    'analysis.indicators', 'analysis.scorer', 'analysis.signals',
-    'risk.manager', 'risk.cest_risk_manager', 'risk.position_sizing',
-    'risk.gap_protection',
-    'utils.state', 'utils.trade_tracker',
-    'multi.context', 'multi.runner', 'multi.dashboard',
-    'logging_config',
+    'config.settings',
+    'broker.client', 'broker.errors',
+    'strategies.momentum', 'strategies.mean_reversion',
+    'strategies.scanner', 'strategies.screener',
+    'execution.engine', 'execution.position_store',
+    'execution.trade_journal', 'execution.position_monitor',
+    'execution.market_regime',
+    'analysis.indicators', 'analysis.scorer',
+    'analysis.signals', 'analysis.data_loader',
+    'risk.manager', 'utils.bar_cache', 'logging_config',
 ]
 for mod_name in modules:
     try:
@@ -264,87 +206,69 @@ if failures:
 print(f'OK — {len(modules)} modules imported successfully')
 " || err "Pre-flight check failed — fix import errors before deploying"
 
-info "Multi-bot configuration validated successfully"
+info "Intraday configuration validated successfully"
 
 # =============================================================================
-# 7. Stop legacy services (if present) and install multi-bot service
+# 7. Install intraday service
 # =============================================================================
-MULTI_SERVICE_FILE="/etc/systemd/system/${MULTI_SERVICE}.service"
+TARGET_SERVICE_FILE="/etc/systemd/system/${TARGET_SERVICE}.service"
 
-# Stop and disable legacy single-bot services
-for SVC in "$LEGACY_CEST_SERVICE" "$LEGACY_INTRADAY_SERVICE"; do
+# Stop and remove legacy service units if present.
+for SVC in "${LEGACY_SERVICES[@]}"; do
     SVC_FILE="/etc/systemd/system/${SVC}.service"
+
     if systemctl is-active --quiet "$SVC" 2>/dev/null; then
-        info "Stopping legacy service '$SVC' ..."
+        info "Stopping service '$SVC' ..."
         systemctl stop "$SVC"
     fi
+
     if systemctl is-enabled --quiet "$SVC" 2>/dev/null; then
-        info "Disabling legacy service '$SVC' ..."
+        info "Disabling service '$SVC' ..."
         systemctl disable "$SVC"
     fi
+
     if [[ -f "$SVC_FILE" ]]; then
-        info "Removing legacy service file: $SVC_FILE"
+        info "Removing service file: $SVC_FILE"
         rm -f "$SVC_FILE"
     fi
 done
 
-# Install multi-bot service
-info "Installing multi-bot service ..."
-cp "$BOT_DIR/deploy/multi-bot.service" "$MULTI_SERVICE_FILE"
-chmod 644 "$MULTI_SERVICE_FILE"
+# Stop current intraday service before replacing unit file
+if systemctl is-active --quiet "$TARGET_SERVICE" 2>/dev/null; then
+    info "Stopping service '$TARGET_SERVICE' ..."
+    systemctl stop "$TARGET_SERVICE"
+fi
+
+info "Installing $TARGET_SERVICE service ..."
+cp "$BOT_DIR/$TARGET_SERVICE_SRC" "$TARGET_SERVICE_FILE"
+chmod 644 "$TARGET_SERVICE_FILE"
 
 systemctl daemon-reload
-systemctl enable "$MULTI_SERVICE"
+systemctl enable "$TARGET_SERVICE"
 
 echo ""
-info "Multi-bot service installed and enabled for startup on boot."
-info "Starting multi-bot service now ..."
-systemctl start "$MULTI_SERVICE"
+info "$TARGET_SERVICE service installed and enabled for startup on boot."
+info "Starting $TARGET_SERVICE service now ..."
+systemctl start "$TARGET_SERVICE"
 
-sleep 5   # Give processes a moment to initialise (accounts start with 30s stagger)
+sleep 5
 
 echo ""
 echo "================================================================"
-echo "  DEPLOYMENT COMPLETE — multi-account trading bot active"
+echo "  DEPLOYMENT COMPLETE — intraday trading bot active"
 echo "================================================================"
 echo ""
 echo "Service status:"
 echo "────────────────────────────────────────"
-systemctl status "$MULTI_SERVICE" --no-pager || true
-echo ""
-
-# Show deployed account summary
-echo "Deployed accounts:"
-echo "────────────────────────────────────────"
-if [[ -f "$ACCOUNTS_YAML" ]]; then
-    sudo -u "$BOT_USER" "$VENV/bin/python" -c "
-import os, sys, yaml
-os.chdir('$BOT_DIR')
-sys.path.insert(0, '$BOT_DIR')
-with open('$ACCOUNTS_YAML') as f:
-    data = yaml.safe_load(f)
-for acct in data['accounts']:
-    print(f'  {acct[\"id\"]:<25s} ({acct[\"bot_type\"]:<8s})  {acct[\"label\"]}')
-"
-fi
+systemctl status "$TARGET_SERVICE" --no-pager || true
 echo ""
 echo "Useful commands:"
-echo "  systemctl status  $MULTI_SERVICE       # check multi-bot status"
-echo "  systemctl stop    $MULTI_SERVICE       # stop all accounts"
-echo "  systemctl restart $MULTI_SERVICE       # restart all accounts"
-echo "  journalctl -u $MULTI_SERVICE -f        # live log tail"
+echo "  systemctl status  $TARGET_SERVICE"
+echo "  systemctl stop    $TARGET_SERVICE"
+echo "  systemctl restart $TARGET_SERVICE"
+echo "  journalctl -u $TARGET_SERVICE -f"
 echo ""
-echo "  cd $BOT_DIR && $VENV/bin/python multi_main.py --dashboard  # performance leaderboard"
-echo "  cd $BOT_DIR && $VENV/bin/python multi_main.py --promote    # strategy promotion report"
-echo ""
-echo "Per-account logs:"
-if [[ -f "$ACCOUNTS_YAML" ]]; then
-    for ACCT_ID in $(grep -E '^\s+-?\s*id:' "$ACCOUNTS_YAML" | sed 's/.*id:\s*"\?\([^"]*\)"\?.*/\1/'); do
-        echo "  tail -f $BOT_DIR/logs/$ACCT_ID/app.log"
-    done
-fi
-echo ""
-echo "Log files are in: $BOT_DIR/logs/<account_id>/"
-echo "State files in:   $BOT_DIR/data/<account_id>/"
-echo "Account config:   $ACCOUNTS_YAML"
-echo "Env config:       $ENV_FILE"
+echo "Runtime files:"
+echo "  Logs:  $BOT_DIR/logs/"
+echo "  Data:  $BOT_DIR/data/"
+echo "  Env:   $ENV_FILE"

@@ -1,4 +1,4 @@
-"""Shared fixtures for CEST bot tests."""
+"""Shared fixtures for intraday bot tests."""
 
 import numpy as np
 import pandas as pd
