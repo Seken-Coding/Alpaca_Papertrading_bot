@@ -15,5 +15,5 @@ try:
         "Recommendation",
     ]
 except ImportError:
-    # alpaca-py not installed — CEST strategy modules still work independently
+    # alpaca-py not installed — strategy imports are deferred until runtime env is ready
     __all__ = []

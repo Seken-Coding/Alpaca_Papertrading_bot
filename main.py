@@ -42,9 +42,8 @@ from execution.position_monitor import PositionMonitor
 from execution.market_regime import MarketRegimeFilter
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-# NOTE: setup_logging() is called in main(), not at import time, so that
-# importing this module from the multi-account runner doesn't clobber
-# per-account logging configuration.
+# NOTE: setup_logging() is called in main(), not at import time, so imports
+# from tests/other modules do not unexpectedly reconfigure logging.
 logger = logging.getLogger(__name__)
 trades_logger = logging.getLogger("trades")
 risk_logger = logging.getLogger("risk")
@@ -243,7 +242,7 @@ def _run_scheduler(client: AlpacaClient, risk: RiskManager, cfg=None,
     market is closed (evenings, weekends, holidays) the bot idles and logs
     a status message every 10 minutes.
     """
-    # Ensure SIGTERM triggers clean shutdown (needed when called from multi runner)
+    # Ensure SIGTERM triggers clean shutdown when managed by systemd/process managers.
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     s = cfg or settings

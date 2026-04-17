@@ -1,9 +1,9 @@
 """Shared file-based cache for bar (OHLCV) data.
 
-When multiple bots or accounts run concurrently they often request the same
-market data from Alpaca.  This module stores fetched bar DataFrames on disk
-so the first request hits the API and subsequent requests within the TTL
-read from the local cache.
+Repeated scanner runs often request the same market data from Alpaca.
+This module stores fetched bar DataFrames on disk so the first request
+hits the API and subsequent requests within the TTL read from the local
+cache.
 
 Cache files live under ``cache/bars/`` (configurable) and are organised as::
 
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Default cache directory (relative to project root)
 _DEFAULT_CACHE_DIR = Path("cache/bars")
 
-# Default TTL in seconds (15 minutes — covers the typical multi-bot startup window)
+# Default TTL in seconds (15 minutes — covers the typical startup window)
 _DEFAULT_TTL = int(os.getenv("BAR_CACHE_TTL", "900"))
 
 
@@ -98,8 +98,8 @@ class BarCache:
         return self._cache_dir / f"{symbol}_{timeframe}_{limit}.pkl"
 
 
-# Module-level singleton so all bots in the same process share one instance.
-# Separate processes will share via the filesystem.
+# Module-level singleton so all callers in the same process share one instance.
+# Separate processes share cached files via the filesystem.
 _shared_cache: BarCache | None = None
 
 
