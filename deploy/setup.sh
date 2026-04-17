@@ -109,6 +109,20 @@ mkdir -p "$BOT_DIR/data"
 chown -R "$BOT_USER:$BOT_USER" "$BOT_DIR"
 info "Files deployed to $BOT_DIR"
 
+# Ensure runtime paths and log files stay writable by the service user.
+# This prevents boot/update failures when files were previously created by root.
+install -d -o "$BOT_USER" -g "$BOT_USER" -m 775 "$BOT_DIR/logs" "$BOT_DIR/data"
+touch \
+    "$BOT_DIR/logs/app.log" \
+    "$BOT_DIR/logs/errors.log" \
+    "$BOT_DIR/logs/trades.log" \
+    "$BOT_DIR/logs/risk.log" \
+    "$BOT_DIR/logs/scanner.log" \
+    "$BOT_DIR/logs/bot_status.log" \
+    "$BOT_DIR/logs/trade_journal.csv"
+chown "$BOT_USER:$BOT_USER" "$BOT_DIR"/logs/*
+chmod 664 "$BOT_DIR"/logs/*
+
 # =============================================================================
 # 4. Python virtual environment
 # =============================================================================
@@ -154,6 +168,10 @@ else
     echo ""
     read -rp "Press Enter after you have filled in $ENV_FILE ..."
 fi
+
+# Keep env readable by the service user across updates.
+chown "$BOT_USER:$BOT_USER" "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 
 # =============================================================================
 # 6. Validate .env and run pre-flight checks

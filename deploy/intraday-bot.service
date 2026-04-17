@@ -36,8 +36,10 @@ Restart=on-failure
 RestartSec=30s
 
 # ── Logging ─────────────────────────────────────────────────────────────────
-StandardOutput=append:/opt/trading-bot/logs/app.log
-StandardError=append:/opt/trading-bot/logs/errors.log
+# Let Python logging_config.py own file logging under /opt/trading-bot/logs.
+# Keeping stdout/stderr in journald avoids root-owned file creation conflicts.
+StandardOutput=journal
+StandardError=journal
 
 # ── Hardening (optional but recommended) ────────────────────────────────────
 # PrivateTmp=yes
